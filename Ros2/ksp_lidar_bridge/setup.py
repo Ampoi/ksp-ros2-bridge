@@ -14,7 +14,7 @@ setup(
     zip_safe=True,
     maintainer="Kerbal LiDAR Lab",
     maintainer_email="user@example.com",
-    description="Bridge KerbalLiDAR UDP JSON packets to ROS2 sensor topics.",
+    description="Bridge KerbalLiDAR sensors and robotic motors to standard ROS2 topics.",
     license="MIT",
     test_suite="test.test_packet_conversion",
     entry_points={

@@ -2,14 +2,16 @@
 <package format="3">
   <name>ksp_lidar_bridge</name>
   <version>0.1.0</version>
-  <description>Bridge KerbalLiDAR UDP JSON packets to ROS2 sensor topics.</description>
+  <description>Bridge KerbalLiDAR sensors and robotic motors to standard ROS2 topics.</description>
   <maintainer email="user@example.com">Kerbal LiDAR Lab</maintainer>
   <license>MIT</license>
 
   <buildtool_depend>ament_python</buildtool_depend>
 
   <exec_depend>rclpy</exec_depend>
+  <exec_depend>diagnostic_msgs</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>trajectory_msgs</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
