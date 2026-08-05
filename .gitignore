@@ -1,0 +1,15 @@
+bin/
+obj/
+.dotnet/
+.dotnet-linux-net8/
+.dotnet_home/
+.nuget/
+.tmp/
+.dotnet-install.ps1
+*.user
+*.suo
+*.log
+__pycache__/
+*.pyc
+GameData/KerbalLiDAR/Plugins/*.dll
+GameData/KerbalLiDAR/Plugins/*.pdb
