@@ -48,6 +48,22 @@ namespace KerbalLiDAR
         public string partName = "";
 
         // Kept for loading craft files made before partName was introduced.
+        [KSPField(isPersistant = true, guiActive = true, guiName = "Active Vessel URDF")]
+        [UI_Toggle(enabledText = "On", disabledText = "Off")]
+        public bool activeVesselUrdfEnabled = true;
+
+        [KSPField]
+        public float activeVesselUrdfRefreshSeconds = 2f;
+
+        [KSPField]
+        public int activeVesselUrdfChunkBytes = 12000;
+
+        [KSPField]
+        public int maxActiveVesselUrdfChunks = 256;
+
+        [KSPField]
+        public bool allowRemoteUrdf = false;
+
         [KSPField(isPersistant = true)]
         public string lidarName = "";
 
@@ -195,6 +211,8 @@ namespace KerbalLiDAR
                 return;
             }
 
+            ProcessActiveVesselUrdf();
+
             if (!lidarEnabled && !radarLinesVisible)
             {
                 ClearRadarLines();
@@ -253,6 +271,7 @@ namespace KerbalLiDAR
             DestroyRadarLines();
             DestroyVisualModel();
             SendFlightTopicInactive();
+            ClearActiveVesselUrdf();
             CloseUdpClient();
         }
 
@@ -298,8 +317,11 @@ namespace KerbalLiDAR
             packetBuilder.Append('{');
             AppendProperty(packetBuilder, "type", "ksp_lidar_inactive", true);
             AppendProperty(packetBuilder, "version", JsonVersion, false);
-            AppendProperty(packetBuilder, "name", ResolveLidarName(), false);
-            AppendProperty(packetBuilder, "lidarName", ResolveLidarName(), false);
+            AppendProperty(packetBuilder, "mode", Is3DMode() ? "3D" : "2D", false);
+            var resolvedPartName = ResolvePartName();
+            AppendProperty(packetBuilder, "name", resolvedPartName, false);
+            AppendProperty(packetBuilder, "partName", resolvedPartName, false);
+            AppendProperty(packetBuilder, "lidarName", resolvedPartName, false);
             AppendProperty(packetBuilder, "vessel", vessel != null ? vessel.vesselName : "", false);
             AppendProperty(packetBuilder, "partFlightId", part != null ? (long)part.flightID : 0L, false);
             packetBuilder.Append('}');
@@ -717,6 +739,9 @@ namespace KerbalLiDAR
             scanRateHz = Mathf.Clamp(Mathf.Round(scanRateHz), 1f, 60f);
             udpPort = Mathf.Clamp(udpPort, 1, 65535);
             partName = string.IsNullOrEmpty(partName) ? "" : partName.Trim();
+            activeVesselUrdfRefreshSeconds = Mathf.Clamp(activeVesselUrdfRefreshSeconds, 0.5f, 30f);
+            activeVesselUrdfChunkBytes = Mathf.Clamp(activeVesselUrdfChunkBytes, 128, 48000);
+            maxActiveVesselUrdfChunks = Mathf.Clamp(maxActiveVesselUrdfChunks, 1, 512);
             lidarName = string.IsNullOrEmpty(lidarName) ? "" : lidarName.Trim();
             if (string.IsNullOrEmpty(partName) && !string.IsNullOrEmpty(lidarName))
             {

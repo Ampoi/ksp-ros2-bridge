@@ -4,7 +4,7 @@ package_name = "ksp_lidar_bridge"
 
 setup(
     name=package_name,
-    version="0.1.0",
+    version="0.2.0",
     packages=[package_name],
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
@@ -14,7 +14,7 @@ setup(
     zip_safe=True,
     maintainer="Kerbal LiDAR Lab",
     maintainer_email="user@example.com",
-    description="Bridge KerbalLiDAR UDP JSON packets to ROS2 sensor topics.",
+    description="Bridge KerbalLiDAR scans and active-vessel runtime URDF proxies to ROS2.",
     license="MIT",
     test_suite="test.test_packet_conversion",
     entry_points={
