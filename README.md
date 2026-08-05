@@ -108,3 +108,22 @@ ros2 topic echo /ksp_ros2/lidar/front_lidar
 ```powershell
 python .\Tools\lidar_udp_listener.py --port 49010
 ```
+
+## 並列開発（Git worktree）
+
+機能ごとに独立したブランチと作業ディレクトリを作成できます。worktreeは既定でリポジトリ内の`.worktrees/`へ作られ、このディレクトリ自体はGit管理から除外されます。
+
+```bash
+# work/ros2-refactorブランチと対応するworktreeを作成
+./Tools/worktree.sh create ros2-refactor
+cd .worktrees/ros2-refactor
+
+# 確認と削除
+./Tools/worktree.sh list
+./Tools/worktree.sh remove ros2-refactor
+git branch -d work/ros2-refactor
+```
+
+各worktreeでは変更を小さくコミットし、元のworktreeから`git merge --no-ff work/<name>`で統合します。同じブランチを複数のworktreeで同時にcheckoutすることはできません。
+
+`dev_sync.sh`の同期先であるKSP本体とROS2ワークスペースは全worktreeで共有されます。各worktree内のローカルなテストとビルドは並行できますが、`dev_sync.sh`による共有先への同期は統合後に一つのworktreeから実行してください。

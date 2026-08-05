@@ -5,6 +5,7 @@ obj/
 .dotnet_home/
 .nuget/
 .tmp/
+.worktrees/
 .dotnet-install.ps1
 *.user
 *.suo
