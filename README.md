@@ -1,6 +1,6 @@
-# Kerbal LiDAR
+# Kerbal LiDAR / ROS2 Robotics
 
-Kerbal Space Program 1.x向けの表面取付LiDAR modです。2D LiDARと3D LiDARの2パーツを追加し、レイが当たった距離をUDP JSONとして外部プログラムへ送信します。
+Kerbal Space Program 1.x向けのLiDAR・ロボティクスmodです。2D/3D LiDARに加え、ROS2から操作できる回転サーボとリニアモーターを追加します。KSPとROS2の間はUDP JSONで中継します。
 
 ## できること
 
@@ -11,6 +11,11 @@ Kerbal Space Program 1.x向けの表面取付LiDAR modです。2D LiDARと3D LiD
 - 別ROS2パッケージでUDP JSONを標準ROS2 Topicへ中継
 - Flight中の操作機体を、資産を含まないランタイム用プロキシURDFとしてROS2へ中継
 - 自船コライダーを無視する設定
+- Clamp-O-Tron Jr.と同じ0.625 m径の両面スタック式回転サーボ
+- 両端にパーツを取り付けられる、ストローク1.5 mのリニアモーター
+- ROS2 `trajectory_msgs/msg/JointTrajectory`による位置・速度・effort上限制御
+- ROS2 `sensor_msgs/msg/JointState`による位置・速度・トルク/推力フィードバック
+- `diagnostic_msgs/msg/DiagnosticArray`による電源状態・推定電流フィードバック
 
 ## ビルド
 
@@ -124,6 +129,34 @@ RViz2ではRobotModel表示のDescription Topicを`/ros2_ksp/active_vessel/robot
 - 保護されたROSネットワークで意図的に共有する場合だけ、KSPの`allowRemoteUrdf = true`とbridgeの`--allow-remote-models --allow-network-model-topics`を指定します。
 
 ROS2 Topicへ平文をpublishした後、同じホスト上の別プロセスによる購読・rosbag保存まで完全に防ぐことはできません。この実装は再利用可能なゲーム資産を最初から含めず、ネットワーク配布と永続化を既定で避ける設計です。より強いアクセス制御が必要な環境では、OSユーザー分離とSROS2/DDS Securityも併用してください。
+
+## ROS2モーター
+
+追加パーツ:
+
+- `ROS2 Size-0 Axial Servo`: 回転軸。可動範囲は-180〜180度、既定速度は45度/s、定格トルクは250 N·m
+- `ROS2 Size-0 Linear Motor`: 直動軸。可動範囲は0〜1.5 m、既定速度は0.25 m/s、定格推力は4000 N
+
+どちらも`bottom`側を親パーツへ、動かしたい構造物を`top`側へ取り付けます。モデルはベースKSPのFL-R20とClamp-O-Tron Jr.を組み合わせているため、新規モデルファイルは不要です。
+
+ROS2ブリッジを起動すると、KSPは状態をUDP 49010へ送り、ブリッジは指令をUDP 49011へ返します。モーター名を未設定にした場合は、KSPの`partFlightId`を使って`servo_<id>`または`linear_<id>`になります。
+
+主なTopic:
+
+- subscribe `/ros2_ksp/motors/command`: `trajectory_msgs/msg/JointTrajectory`
+- publish `/joint_states`: `sensor_msgs/msg/JointState`
+- publish `/diagnostics`: `diagnostic_msgs/msg/DiagnosticArray`
+
+回転軸のposition/velocityはrad・rad/s、直動軸はm・m/sです。effortは回転軸がN·m、直動軸がNです。以下はサーボを90度へ0.5 rad/s、最大100 N·mで動かす例です。
+
+```bash
+ros2 topic pub --once /ros2_ksp/motors/command trajectory_msgs/msg/JointTrajectory \
+  "{joint_names: [servo_12345], points: [{positions: [1.5708], velocities: [0.5], effort: [100.0]}]}"
+```
+
+`JointTrajectory`に複数pointを指定した場合、`time_from_start`の時刻に順番にKSPへ送ります。新しいtrajectoryを受信すると、未送信の古いtrajectoryは置き換えます。positionを省略してvelocityだけを送ると速度モードになり、通信断時は0.5秒でその場停止します。
+
+`/joint_states.effort`はKSPロボティクスジョイントのモーター出力から換算した推定トルク/推力です。`/diagnostics`の`estimated_current_a`は、パーツ設定の`torquePerAmpNm`または`forcePerAmpN`を使った推定値で、実測電流ではありません。
 
 ## UDP JSON
 
