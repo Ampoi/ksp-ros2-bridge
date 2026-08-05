@@ -1,9 +1,9 @@
 bin/
 obj/
-.dotnet/
-.dotnet-linux-net8/
-.dotnet_home/
-.nuget/
+/.dotnet
+/.dotnet-linux-net8
+/.dotnet_home
+/.nuget
 .tmp/
 .worktrees/
 .dotnet-install.ps1
