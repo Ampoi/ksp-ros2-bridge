@@ -1,17 +1,22 @@
 import argparse
-import json
-import math
-import re
 import socket
 import struct
 import sys
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy._rclpy_pybind11 import RCLError
 from sensor_msgs.msg import LaserScan, PointCloud2, PointField
+
+from .packet_conversion import (
+    decode_datagram,
+    laser_scan_from_packet,
+    packet_lidar_name,
+    points_from_packet,
+    sanitize_ros_name,
+)
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -25,99 +30,6 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--node-name", default="ksp_lidar_udp_bridge")
     parser.add_argument("--max-datagram-bytes", type=int, default=65535)
     return parser.parse_args(argv)
-
-
-def sanitize_ros_name(value: Any, fallback: str = "lidar") -> str:
-    name = re.sub(r"[^A-Za-z0-9_]", "_", str(value or ""))
-    name = re.sub(r"_+", "_", name).strip("_").lower()
-    if not name:
-        name = fallback
-    if not re.match(r"^[A-Za-z_]", name):
-        name = "_" + name
-    return name
-
-
-def as_float(value: Any, default: float) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def as_int(value: Any, default: int) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def packet_lidar_name(packet: Dict[str, Any]) -> str:
-    explicit = packet.get("lidarName") or packet.get("name")
-    if explicit:
-        return str(explicit)
-
-    vessel = sanitize_ros_name(packet.get("vessel"), "vessel")
-    part_id = as_int(packet.get("partFlightId"), 0)
-    return f"{vessel}_{part_id}"
-
-
-def normalized_ranges(values: Any, count: int, range_max: float) -> List[float]:
-    source = values if isinstance(values, list) else []
-    ranges: List[float] = []
-    for index in range(count):
-        raw = source[index] if index < len(source) else math.inf
-        value = as_float(raw, math.inf)
-        if not math.isfinite(value) or value < 0.0 or value > range_max:
-            ranges.append(math.inf)
-        else:
-            ranges.append(value)
-    return ranges
-
-
-def chunked_vectors(values: Any) -> Iterable[Tuple[float, float, float]]:
-    source = values if isinstance(values, list) else []
-    for value in source:
-        if not isinstance(value, list) or len(value) < 3:
-            yield (math.nan, math.nan, math.nan)
-            continue
-        yield (
-            as_float(value[0], math.nan),
-            as_float(value[1], math.nan),
-            as_float(value[2], math.nan),
-        )
-
-
-def points_from_packet(packet: Dict[str, Any]) -> List[Tuple[float, float, float]]:
-    range_max = max(0.001, as_float(packet.get("maxDistance"), 0.001))
-    ray_count = max(0, as_int(packet.get("rayCount"), 0))
-    ranges = normalized_ranges(packet.get("ranges"), ray_count, range_max)
-
-    points = packet.get("points")
-    if isinstance(points, list) and points:
-        output = []
-        for index, point in enumerate(chunked_vectors(points)):
-            if index >= len(ranges):
-                break
-            if math.isfinite(ranges[index]) and all(math.isfinite(axis) for axis in point):
-                output.append(point)
-        return output
-
-    directions = list(chunked_vectors(packet.get("directions")))
-    output = []
-    for index, distance in enumerate(ranges):
-        if index >= len(directions):
-            break
-        direction = directions[index]
-        if not math.isfinite(distance) or not all(math.isfinite(axis) for axis in direction):
-            continue
-        output.append(
-            (
-                direction[0] * distance,
-                direction[1] * distance,
-                direction[2] * distance,
-            )
-        )
-    return output
 
 
 class KerbalLidarUdpBridge(Node):
@@ -150,7 +62,7 @@ class KerbalLidarUdpBridge(Node):
                 return
 
             try:
-                packet = json.loads(data.decode("utf-8"))
+                packet = decode_datagram(data)
             except Exception as exc:
                 self.get_logger().warning(f"Dropped invalid KerbalLiDAR packet: {exc}")
                 continue
@@ -197,30 +109,18 @@ class KerbalLidarUdpBridge(Node):
         return publisher
 
     def build_laser_scan(self, packet: Dict[str, Any], frame_id: str) -> LaserScan:
-        horizontal_count = max(1, as_int(packet.get("horizontalCount"), 1))
-        range_max = max(0.001, as_float(packet.get("maxDistance"), 0.001))
-        fov_rad = math.radians(max(0.0, as_float(packet.get("horizontalFovDeg"), 0.0)))
-        if fov_rad <= 0.0:
-            fov_rad = math.tau
-
-        angle_min = -fov_rad * 0.5
-        if abs(math.degrees(fov_rad)) >= 359.9:
-            angle_increment = fov_rad / horizontal_count
-        else:
-            angle_increment = fov_rad / max(horizontal_count - 1, 1)
-
+        data = laser_scan_from_packet(packet)
         scan = LaserScan()
         scan.header.stamp = self.get_clock().now().to_msg()
         scan.header.frame_id = frame_id
-        scan.angle_min = angle_min
-        scan.angle_increment = angle_increment
-        scan.angle_max = angle_min + angle_increment * max(horizontal_count - 1, 0)
-        scan_rate = as_float(packet.get("scanRateHz"), 1.0)
-        scan.scan_time = 1.0 / scan_rate if scan_rate > 0.0 else 0.0
-        scan.time_increment = scan.scan_time / horizontal_count
-        scan.range_min = 0.0
-        scan.range_max = range_max
-        scan.ranges = normalized_ranges(packet.get("ranges"), horizontal_count, range_max)
+        scan.angle_min = data.angle_min
+        scan.angle_increment = data.angle_increment
+        scan.angle_max = data.angle_max
+        scan.scan_time = data.scan_time
+        scan.time_increment = data.time_increment
+        scan.range_min = data.range_min
+        scan.range_max = data.range_max
+        scan.ranges = data.ranges
         scan.intensities = []
         return scan
 
