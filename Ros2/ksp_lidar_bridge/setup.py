@@ -16,6 +16,7 @@ setup(
     maintainer_email="user@example.com",
     description="Bridge KerbalLiDAR UDP JSON packets to ROS2 sensor topics.",
     license="MIT",
+    test_suite="test.test_packet_conversion",
     entry_points={
         "console_scripts": [
             "udp_bridge = ksp_lidar_bridge.udp_bridge:main",
