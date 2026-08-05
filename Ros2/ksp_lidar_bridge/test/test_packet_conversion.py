@@ -5,8 +5,11 @@ from ksp_lidar_bridge.packet_conversion import (
     chunked_vectors,
     decode_datagram,
     laser_scan_from_packet,
+    lidar_topic_from_packet,
+    lidar_topic_suffix,
     normalized_ranges,
     packet_lidar_name,
+    packet_part_name,
     points_from_packet,
     sanitize_ros_name,
 )
@@ -107,13 +110,42 @@ class ScanNormalizationTests(unittest.TestCase):
 
 
 class NameTests(unittest.TestCase):
+    def test_prefers_part_name(self):
+        packet = {
+            "partName": "roof_lidar",
+            "lidarName": "legacy_name",
+            "name": "oldest_name",
+        }
+        self.assertEqual(packet_part_name(packet), "roof_lidar")
+
     def test_sanitizes_explicit_lidar_name(self):
         packet = {"lidarName": "Front LiDAR #1"}
         self.assertEqual(sanitize_ros_name(packet_lidar_name(packet)), "front_lidar_1")
 
     def test_builds_name_from_vessel_and_part(self):
         packet = {"vessel": "Mun Rover", "partFlightId": "42"}
-        self.assertEqual(packet_lidar_name(packet), "mun_rover_42")
+        self.assertEqual(packet_part_name(packet), "mun_rover_42")
+
+    def test_builds_topic_suffix_for_each_lidar_mode(self):
+        self.assertEqual(lidar_topic_suffix("2D"), "lidar/scan")
+        self.assertEqual(lidar_topic_suffix("3d"), "lidar/points")
+
+    def test_builds_full_topic_from_part_name_and_mode(self):
+        self.assertEqual(
+            lidar_topic_from_packet({"partName": "Front LiDAR", "mode": "2D"}),
+            "/ros2_ksp/front_lidar/lidar/scan",
+        )
+        self.assertEqual(
+            lidar_topic_from_packet(
+                {"partName": "roof_lidar", "mode": "3D"},
+                "/robot/sensors/",
+            ),
+            "/robot/sensors/roof_lidar/lidar/points",
+        )
+
+    def test_rejects_unknown_lidar_mode(self):
+        with self.assertRaisesRegex(ValueError, "unsupported"):
+            lidar_topic_suffix("camera")
 
 
 if __name__ == "__main__":

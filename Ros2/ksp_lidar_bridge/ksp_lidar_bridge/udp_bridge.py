@@ -13,7 +13,8 @@ from sensor_msgs.msg import LaserScan, PointCloud2, PointField
 from .packet_conversion import (
     decode_datagram,
     laser_scan_from_packet,
-    packet_lidar_name,
+    lidar_topic_from_packet,
+    packet_part_name,
     points_from_packet,
     sanitize_ros_name,
 )
@@ -25,8 +26,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--host", default="0.0.0.0", help="UDP bind host.")
     parser.add_argument("--port", type=int, default=49010, help="UDP bind port.")
-    parser.add_argument("--topic-prefix", default="/ksp_ros2/lidar")
-    parser.add_argument("--frame-prefix", default="ksp_lidar")
+    parser.add_argument("--topic-prefix", default="/ros2_ksp")
+    parser.add_argument("--frame-prefix", default="ros2_ksp")
     parser.add_argument("--node-name", default="ksp_lidar_udp_bridge")
     parser.add_argument("--max-datagram-bytes", type=int, default=65535)
     return parser.parse_args(argv)
@@ -44,7 +45,8 @@ class KerbalLidarUdpBridge(Node):
         self.sock.setblocking(False)
         self.timer = self.create_timer(0.001, self.poll_udp)
         self.get_logger().info(
-            f"Listening on udp://{args.host}:{args.port}; publishing under {self.topic_prefix}/<name>"
+            f"Listening on udp://{args.host}:{args.port}; "
+            f"publishing under {self.topic_prefix}/<part_name>/lidar"
         )
 
     def destroy_node(self) -> bool:
@@ -74,9 +76,14 @@ class KerbalLidarUdpBridge(Node):
 
     def publish_packet(self, packet: Dict[str, Any]) -> None:
         mode = str(packet.get("mode", "")).upper()
-        lidar_name = sanitize_ros_name(packet_lidar_name(packet))
-        topic = f"{self.topic_prefix}/{lidar_name}"
-        frame_id = f"{sanitize_ros_name(self.args.frame_prefix)}_{lidar_name}"
+        try:
+            topic = lidar_topic_from_packet(packet, self.topic_prefix)
+        except ValueError:
+            self.get_logger().warning(f"Dropped packet with unsupported LiDAR mode: {mode}")
+            return
+
+        part_name = sanitize_ros_name(packet_part_name(packet), "lidar")
+        frame_id = f"{sanitize_ros_name(self.args.frame_prefix)}_{part_name}_lidar"
 
         if mode == "2D":
             publisher = self.publisher_for(topic, "LaserScan", LaserScan)
@@ -89,8 +96,6 @@ class KerbalLidarUdpBridge(Node):
             if publisher is not None:
                 publisher.publish(self.build_point_cloud(packet, frame_id))
             return
-
-        self.get_logger().warning(f"Dropped packet with unsupported LiDAR mode: {mode}")
 
     def publisher_for(self, topic: str, type_name: str, message_type: Any) -> Optional[Any]:
         existing_type = self.lidar_publisher_types.get(topic)

@@ -40,7 +40,7 @@ KSP本体のManaged DLLを参照してビルドします。KSPのインストー
 - `verticalFovDegrees`: 垂直FOV
 - `scanRateHz`: 1秒あたりのスキャン回数
 - `streamAt20Fps`: `true`にすると`scanRateHz`ではなく20Hz固定でUDP配信
-- `lidarName`: ROS2 Topic名に使うLiDAR名。空の場合はパーツ名と`partFlightId`から自動生成
+- `partName`: ROS2 Topic名に使う機体内で一意なパーツ名。VAB/SPHで編集可能
 - `maxDistance`: 最大測距距離[m]
 - `udpHost`: UDP送信先
 - `udpPort`: UDP送信先ポート
@@ -57,6 +57,12 @@ VAB/SPHまたはFlightでLiDARパーツを右クリックし、Part Action Windo
 
 アクショングループには`Toggle Laser Preview`として登録できます。
 
+## ROS2パーツ名
+
+VAB/SPHでLiDARパーツを右クリックし、`Edit ROS2 Part Name`を押すとパーツ名を編集できます。入力値はROS2名として使える英数字とアンダースコアへ正規化され、同じ機体内に同名がある場合は`_2`、`_3`のような接尾辞が自動で付きます。未入力のパーツにも自動で一意な名前が設定されます。
+
+この名前はcraftファイルへ保存され、各LiDARパーツのTopic名前空間になります。以前のcraftに保存された`lidarName`も引き続き読み込めます。
+
 ## ROS2
 
 KSP側からROS2プロセスは起動しません。別プロセスとして`Ros2/ksp_lidar_bridge`パッケージを起動し、KSPから飛んでくるUDP JSONをLiDAR名ごとのTopicへ変換します。
@@ -70,11 +76,16 @@ source install/setup.bash
 ros2 run ksp_lidar_bridge udp_bridge --host 0.0.0.0 --port 49010
 ```
 
-Topicは`/ksp_ros2/lidar/<name>`です。2D LiDARは`sensor_msgs/msg/LaserScan`、3D LiDARは`sensor_msgs/msg/PointCloud2`としてpublishします。
+Topicはパーツごとに作られます。2D LiDARは`sensor_msgs/msg/LaserScan`、3D LiDARは`sensor_msgs/msg/PointCloud2`としてpublishします。
+
+- 2D LiDAR: `/ros2_ksp/<part_name>/lidar/scan`
+- 3D LiDAR: `/ros2_ksp/<part_name>/lidar/points`
+
+同じ機体に複数のLiDARを搭載した場合も、各パーツ名のTopicへすべてpublishされます。将来カメラを追加する場合も、`/ros2_ksp/<part_name>/camera/image_rgb`のように同じ階層へ拡張できます。
 
 ```bash
-ros2 topic list | grep /ksp_ros2/lidar
-ros2 topic echo /ksp_ros2/lidar/front_lidar
+ros2 topic list | grep /ros2_ksp
+ros2 topic echo /ros2_ksp/front_lidar/lidar/scan
 ```
 
 ## UDP JSON
@@ -87,6 +98,7 @@ ros2 topic echo /ksp_ros2/lidar/front_lidar
   "version": 1,
   "mode": "3D",
   "name": "front_lidar",
+  "partName": "front_lidar",
   "lidarName": "front_lidar",
   "vessel": "Rover",
   "partFlightId": 12345,

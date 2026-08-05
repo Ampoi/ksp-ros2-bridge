@@ -4,7 +4,8 @@ KerbalLiDARのUDP JSONを受け取り、LiDAR名ごとにROS2の標準センサT
 
 - 2D LiDAR: `sensor_msgs/msg/LaserScan`
 - 3D LiDAR: `sensor_msgs/msg/PointCloud2`
-- Topic: `/ksp_ros2/lidar/<name>`
+- 2D Topic: `/ros2_ksp/<part_name>/lidar/scan`
+- 3D Topic: `/ros2_ksp/<part_name>/lidar/points`
 
 3D点群は、現在のKSP modが送信するフラット配列（`[x,y,z,...]`）と、旧形式のネスト配列（`[[x,y,z],...]`）の両方を受信できます。
 
@@ -27,9 +28,11 @@ ros2 run ksp_lidar_bridge udp_bridge --host 0.0.0.0 --port 49010
 確認例:
 
 ```bash
-ros2 topic list | grep /ksp_ros2/lidar
-ros2 topic echo /ksp_ros2/lidar/front_lidar
+ros2 topic list | grep /ros2_ksp
+ros2 topic echo /ros2_ksp/front_lidar/lidar/scan
 ```
+
+`<part_name>`はVAB/SPHのパーツ右クリックメニューにある`Edit ROS2 Part Name`で設定します。機体に搭載されたすべてのKerbalLiDARパーツについて、名前別のpublisherが動的に作られます。Topicルートを変更する場合は`--topic-prefix`を指定してください。
 
 ## Test
 
