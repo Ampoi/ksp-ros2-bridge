@@ -45,10 +45,19 @@ export NUGET_PACKAGES="$script_dir/.nuget/packages"
 export DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
 export DOTNET_NOLOGO=1
 
-"$dotnet" build "$script_dir/Source/KerbalLiDAR/KerbalLiDAR.csproj" \
+project_path="$script_dir/Source/KerbalLiDAR/KerbalLiDAR.csproj"
+assets_path="$script_dir/Source/KerbalLiDAR/obj/project.assets.json"
+restore_args=()
+if [[ -f "$assets_path" && ! "$project_path" -nt "$assets_path" && ! "$script_dir/NuGet.Config" -nt "$assets_path" ]]; then
+    restore_args+=(--no-restore)
+    echo "Using cached NuGet assets: $assets_path"
+fi
+
+"$dotnet" build "$project_path" \
     -c "$configuration" \
     -p:KSPDIR="$ksp_dir" \
     -p:KSPManagedDir="$managed" \
+    "${restore_args[@]}" \
     --configfile "$script_dir/NuGet.Config"
 
 echo "KerbalLiDAR mod folder is ready at: $script_dir/GameData/KerbalLiDAR"

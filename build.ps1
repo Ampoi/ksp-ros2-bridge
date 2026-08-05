@@ -31,7 +31,18 @@ $env:NUGET_PACKAGES = Join-Path $PSScriptRoot ".nuget\packages"
 $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1"
 $env:DOTNET_NOLOGO = "1"
 
-& $dotnet build ".\Source\KerbalLiDAR\KerbalLiDAR.csproj" -c $Configuration -p:KSPDIR="$KspDir" -p:KSPManagedDir="$managed" --configfile ".\NuGet.Config"
+$projectPath = Join-Path $PSScriptRoot "Source\KerbalLiDAR\KerbalLiDAR.csproj"
+$assetsPath = Join-Path $PSScriptRoot "Source\KerbalLiDAR\obj\project.assets.json"
+$nugetConfigPath = Join-Path $PSScriptRoot "NuGet.Config"
+$restoreArgs = @()
+if ((Test-Path $assetsPath) -and
+    (Get-Item $assetsPath).LastWriteTimeUtc -ge (Get-Item $projectPath).LastWriteTimeUtc -and
+    (Get-Item $assetsPath).LastWriteTimeUtc -ge (Get-Item $nugetConfigPath).LastWriteTimeUtc) {
+    $restoreArgs += "--no-restore"
+    Write-Host "Using cached NuGet assets: $assetsPath"
+}
+
+& $dotnet build $projectPath -c $Configuration -p:KSPDIR="$KspDir" -p:KSPManagedDir="$managed" @restoreArgs --configfile $nugetConfigPath
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
