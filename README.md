@@ -127,4 +127,6 @@ git branch -d work/ros2-refactor
 
 各worktreeでは変更を小さくコミットし、元のworktreeから`git merge --no-ff work/<name>`で統合します。同じブランチを複数のworktreeで同時にcheckoutすることはできません。
 
+主worktreeにローカル.NET SDK（`.dotnet` / `.dotnet-linux-net8`）やNuGetキャッシュ（`.nuget`）がある場合、作成したworktreeからsymlinkで共有されます。大容量の開発依存をworktreeごとに複製せず、KSPプラグインを同じ環境でビルドできます。
+
 `dev_sync.sh`の同期先であるKSP本体とROS2ワークスペースは全worktreeで共有されます。スクリプト同士はファイルロックで直列化されますが、後から実行したブランチの内容が共有先へ反映されます。各worktree内のローカルなテストとビルドは並行し、共有先への最終同期は統合後に一つのworktreeから実行してください。ロックファイルは`DEV_SYNC_LOCK_FILE`で変更できます。
