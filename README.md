@@ -120,6 +120,7 @@ cd .worktrees/ros2-refactor
 
 # 確認と削除
 ./Tools/worktree.sh list
+cd ../..
 ./Tools/worktree.sh remove ros2-refactor
 git branch -d work/ros2-refactor
 ```
