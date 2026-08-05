@@ -44,6 +44,22 @@ namespace KerbalLiDAR
         [KSPField]
         public int udpPort = 49010;
 
+        [KSPField(isPersistant = true, guiActive = true, guiName = "Active Vessel URDF")]
+        [UI_Toggle(enabledText = "On", disabledText = "Off")]
+        public bool activeVesselUrdfEnabled = true;
+
+        [KSPField]
+        public float activeVesselUrdfRefreshSeconds = 2f;
+
+        [KSPField]
+        public int activeVesselUrdfChunkBytes = 12000;
+
+        [KSPField]
+        public int maxActiveVesselUrdfChunks = 256;
+
+        [KSPField]
+        public bool allowRemoteUrdf = false;
+
         [KSPField(isPersistant = true)]
         public string lidarName = "";
 
@@ -187,6 +203,8 @@ namespace KerbalLiDAR
                 return;
             }
 
+            ProcessActiveVesselUrdf();
+
             if (!lidarEnabled && !radarLinesVisible)
             {
                 ClearRadarLines();
@@ -244,6 +262,7 @@ namespace KerbalLiDAR
         {
             DestroyRadarLines();
             DestroyVisualModel();
+            ClearActiveVesselUrdf();
             CloseUdpClient();
         }
 
@@ -683,6 +702,9 @@ namespace KerbalLiDAR
             maxDistance = Mathf.Max(0.1f, maxDistance);
             scanRateHz = Mathf.Clamp(Mathf.Round(scanRateHz), 1f, 60f);
             udpPort = Mathf.Clamp(udpPort, 1, 65535);
+            activeVesselUrdfRefreshSeconds = Mathf.Clamp(activeVesselUrdfRefreshSeconds, 0.5f, 30f);
+            activeVesselUrdfChunkBytes = Mathf.Clamp(activeVesselUrdfChunkBytes, 128, 48000);
+            maxActiveVesselUrdfChunks = Mathf.Clamp(maxActiveVesselUrdfChunks, 1, 512);
             lidarName = string.IsNullOrEmpty(lidarName) ? "" : lidarName.Trim();
             maxLaserCount = Mathf.Max(1, maxLaserCount);
             maxDatagramBytes = Mathf.Clamp(maxDatagramBytes, 512, 65000);
