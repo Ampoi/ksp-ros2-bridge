@@ -72,6 +72,8 @@ ros2 run ksp_lidar_bridge udp_bridge --host 0.0.0.0 --port 49010
 
 Topicは`/ksp_ros2/lidar/<name>`です。2D LiDARは`sensor_msgs/msg/LaserScan`、3D LiDARは`sensor_msgs/msg/PointCloud2`としてpublishします。
 
+TopicはFlight中にスキャンを受信したときだけ作成されます。Flight終了時に自動削除され、停止通知が欠落してもスキャン停止から3秒後に削除されます。次にFlightへ入ると最初のスキャンから自動でpublishを再開します。タイムアウトはbridgeの`--topic-timeout-sec`で変更できます。
+
 ```bash
 ros2 topic list | grep /ksp_ros2/lidar
 ros2 topic echo /ksp_ros2/lidar/front_lidar

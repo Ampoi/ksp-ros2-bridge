@@ -4,6 +4,7 @@ import unittest
 from ksp_lidar_bridge.packet_conversion import (
     chunked_vectors,
     decode_datagram,
+    expired_topic_names,
     laser_scan_from_packet,
     normalized_ranges,
     packet_lidar_name,
@@ -114,6 +115,15 @@ class NameTests(unittest.TestCase):
     def test_builds_name_from_vessel_and_part(self):
         packet = {"vessel": "Mun Rover", "partFlightId": "42"}
         self.assertEqual(packet_lidar_name(packet), "mun_rover_42")
+
+
+class TopicLifetimeTests(unittest.TestCase):
+    def test_expires_only_topics_at_or_beyond_timeout(self):
+        last_seen = {"/fresh": 8.1, "/boundary": 7.0, "/stale": 1.0}
+        self.assertEqual(
+            expired_topic_names(last_seen, now=10.0, timeout=3.0),
+            ["/boundary", "/stale"],
+        )
 
 
 if __name__ == "__main__":

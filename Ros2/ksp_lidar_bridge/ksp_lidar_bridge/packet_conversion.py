@@ -2,7 +2,7 @@ import json
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Tuple
 
 
 Vector3 = Tuple[float, float, float]
@@ -26,6 +26,16 @@ def decode_datagram(data: bytes) -> Dict[str, Any]:
     if not isinstance(packet, dict):
         raise ValueError("packet root must be a JSON object")
     return packet
+
+
+def expired_topic_names(
+    last_seen_by_topic: Mapping[str, float], now: float, timeout: float
+) -> List[str]:
+    return [
+        topic
+        for topic, last_seen in last_seen_by_topic.items()
+        if now - last_seen >= timeout
+    ]
 
 
 def sanitize_ros_name(value: Any, fallback: str = "lidar") -> str:
