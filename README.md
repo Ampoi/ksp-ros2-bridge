@@ -83,6 +83,8 @@ Topicはパーツごとに作られます。2D LiDARは`sensor_msgs/msg/LaserSca
 
 同じ機体に複数のLiDARを搭載した場合も、各パーツ名のTopicへすべてpublishされます。将来カメラを追加する場合も、`/ros2_ksp/<part_name>/camera/image_rgb`のように同じ階層へ拡張できます。
 
+TopicはFlight中にスキャンを受信したときだけ作成されます。Flight終了時に自動削除され、停止通知が欠落してもスキャン停止から3秒後に削除されます。次にFlightへ入ると最初のスキャンから自動でpublishを再開します。タイムアウトはbridgeの`--topic-timeout-sec`で変更できます。
+
 ```bash
 ros2 topic list | grep /ros2_ksp
 ros2 topic echo /ros2_ksp/front_lidar/lidar/scan

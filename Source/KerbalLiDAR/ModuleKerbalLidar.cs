@@ -136,6 +136,7 @@ namespace KerbalLiDAR
         public string rayBudget = "";
 
         private float nextScanTime;
+        private bool flightTopicActive;
 
         public override void OnStart(StartState state)
         {
@@ -251,6 +252,7 @@ namespace KerbalLiDAR
         {
             DestroyRadarLines();
             DestroyVisualModel();
+            SendFlightTopicInactive();
             CloseUdpClient();
         }
 
@@ -281,7 +283,29 @@ namespace KerbalLiDAR
             if (sendUdp && udpEnabled)
             {
                 SendUdp(scan);
+                flightTopicActive = true;
             }
+        }
+
+        private void SendFlightTopicInactive()
+        {
+            if (!flightTopicActive)
+            {
+                return;
+            }
+
+            packetBuilder.Length = 0;
+            packetBuilder.Append('{');
+            AppendProperty(packetBuilder, "type", "ksp_lidar_inactive", true);
+            AppendProperty(packetBuilder, "version", JsonVersion, false);
+            AppendProperty(packetBuilder, "name", ResolveLidarName(), false);
+            AppendProperty(packetBuilder, "lidarName", ResolveLidarName(), false);
+            AppendProperty(packetBuilder, "vessel", vessel != null ? vessel.vesselName : "", false);
+            AppendProperty(packetBuilder, "partFlightId", part != null ? (long)part.flightID : 0L, false);
+            packetBuilder.Append('}');
+
+            SendUdp(packetBuilder.ToString());
+            flightTopicActive = false;
         }
 
         [KSPEvent(guiActive = true, guiActiveEditor = true, guiName = "LiDAR Preset: Low", active = true)]

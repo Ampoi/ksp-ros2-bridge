@@ -1,7 +1,9 @@
 import argparse
+import math
 import socket
 import struct
 import sys
+import time
 from typing import Any, Dict, List, Optional
 
 import rclpy
@@ -12,12 +14,20 @@ from sensor_msgs.msg import LaserScan, PointCloud2, PointField
 
 from .packet_conversion import (
     decode_datagram,
+    expired_topic_names,
     laser_scan_from_packet,
     lidar_topic_from_packet,
     packet_part_name,
     points_from_packet,
     sanitize_ros_name,
 )
+
+
+def positive_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed <= 0.0:
+        raise argparse.ArgumentTypeError("must be a finite number greater than zero")
+    return parsed
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -30,6 +40,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--frame-prefix", default="ros2_ksp")
     parser.add_argument("--node-name", default="ksp_lidar_udp_bridge")
     parser.add_argument("--max-datagram-bytes", type=int, default=65535)
+    parser.add_argument(
+        "--topic-timeout-sec",
+        type=positive_float,
+        default=3.0,
+        help="Remove a Topic after this many seconds without a scan (default: 3.0).",
+    )
     return parser.parse_args(argv)
 
 
@@ -40,10 +56,12 @@ class KerbalLidarUdpBridge(Node):
         self.topic_prefix = "/" + args.topic_prefix.strip("/")
         self.lidar_publishers: Dict[str, Any] = {}
         self.lidar_publisher_types: Dict[str, str] = {}
+        self.lidar_last_seen: Dict[str, float] = {}
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind((args.host, args.port))
         self.sock.setblocking(False)
         self.timer = self.create_timer(0.001, self.poll_udp)
+        self.cleanup_timer = self.create_timer(0.25, self.remove_stale_publishers)
         self.get_logger().info(
             f"Listening on udp://{args.host}:{args.port}; "
             f"publishing under {self.topic_prefix}/<part_name>/lidar"
@@ -69,10 +87,11 @@ class KerbalLidarUdpBridge(Node):
                 self.get_logger().warning(f"Dropped invalid KerbalLiDAR packet: {exc}")
                 continue
 
-            if packet.get("type") != "ksp_lidar_scan":
-                continue
-
-            self.publish_packet(packet)
+            packet_type = packet.get("type")
+            if packet_type == "ksp_lidar_scan":
+                self.publish_packet(packet)
+            elif packet_type == "ksp_lidar_inactive":
+                self.remove_packet_publisher(packet, "KSP left Flight")
 
     def publish_packet(self, packet: Dict[str, Any]) -> None:
         mode = str(packet.get("mode", "")).upper()
@@ -88,12 +107,14 @@ class KerbalLidarUdpBridge(Node):
         if mode == "2D":
             publisher = self.publisher_for(topic, "LaserScan", LaserScan)
             if publisher is not None:
+                self.lidar_last_seen[topic] = time.monotonic()
                 publisher.publish(self.build_laser_scan(packet, frame_id))
             return
 
         if mode == "3D":
             publisher = self.publisher_for(topic, "PointCloud2", PointCloud2)
             if publisher is not None:
+                self.lidar_last_seen[topic] = time.monotonic()
                 publisher.publish(self.build_point_cloud(packet, frame_id))
             return
 
@@ -112,6 +133,27 @@ class KerbalLidarUdpBridge(Node):
             self.lidar_publisher_types[topic] = type_name
             self.get_logger().info(f"Created {type_name} publisher: {topic}")
         return publisher
+
+    def remove_packet_publisher(self, packet: Dict[str, Any], reason: str) -> None:
+        lidar_name = sanitize_ros_name(packet_lidar_name(packet))
+        self.remove_publisher(f"{self.topic_prefix}/{lidar_name}", reason)
+
+    def remove_stale_publishers(self) -> None:
+        now = time.monotonic()
+        for topic in expired_topic_names(
+            self.lidar_last_seen, now, self.args.topic_timeout_sec
+        ):
+            self.remove_publisher(topic, "scan timeout")
+
+    def remove_publisher(self, topic: str, reason: str) -> None:
+        publisher = self.lidar_publishers.pop(topic, None)
+        self.lidar_publisher_types.pop(topic, None)
+        self.lidar_last_seen.pop(topic, None)
+        if publisher is None:
+            return
+
+        self.destroy_publisher(publisher)
+        self.get_logger().info(f"Removed publisher ({reason}): {topic}")
 
     def build_laser_scan(self, packet: Dict[str, Any], frame_id: str) -> LaserScan:
         data = laser_scan_from_packet(packet)
