@@ -41,7 +41,7 @@ def sanitize_ros_name(value: Any, fallback: str = "lidar") -> str:
 def as_float(value: Any, default: float) -> float:
     try:
         return float(value)
-    except (TypeError, ValueError):
+    except (OverflowError, TypeError, ValueError):
         return default
 
 

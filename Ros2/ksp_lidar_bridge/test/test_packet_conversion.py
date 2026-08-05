@@ -84,6 +84,10 @@ class ScanNormalizationTests(unittest.TestCase):
         self.assertEqual(ranges[3], 4.0)
         self.assertTrue(math.isinf(ranges[4]))
 
+    def test_rejects_overflowing_range(self):
+        ranges = normalized_ranges([10**400], 1, 10.0)
+        self.assertTrue(math.isinf(ranges[0]))
+
     def test_builds_full_circle_scan_values(self):
         scan = laser_scan_from_packet(
             {
