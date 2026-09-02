@@ -171,6 +171,17 @@ namespace KerbalLiDAR
             AppendFloat(builder, value.z);
         }
 
+        private static void AppendQuaternion(StringBuilder builder, Quaternion value)
+        {
+            AppendFloat(builder, value.x);
+            builder.Append(',');
+            AppendFloat(builder, value.y);
+            builder.Append(',');
+            AppendFloat(builder, value.z);
+            builder.Append(',');
+            AppendFloat(builder, value.w);
+        }
+
         private static void AppendJsonString(StringBuilder builder, string value)
         {
             builder.Append('"');

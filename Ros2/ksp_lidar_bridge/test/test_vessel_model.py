@@ -115,6 +115,30 @@ class UrdfChunkAssemblerTests(unittest.TestCase):
             for packet in packets:
                 assembler.consume(packet)
 
+    def test_accepts_bounded_cylinder_and_sphere_primitives(self):
+        urdf = proxy_urdf('<cylinder radius="0.5" length="2"/>')
+        urdf = urdf.replace(
+            '    <collision>\n      <origin xyz="0 0 0" rpy="0 0 0"/>',
+            '    <visual><origin xyz="0 0 1" rpy="0 0 0"/>'
+            '<geometry><sphere radius="0.5"/></geometry></visual>\n'
+            '    <collision>\n      <origin xyz="0 0 0" rpy="0 0 0"/>',
+            1,
+        )
+        model = None
+        assembler = UrdfChunkAssembler()
+        for packet in chunk_packets(urdf):
+            candidate = assembler.consume(packet)
+            if candidate is not None:
+                model = candidate
+        self.assertIsNotNone(model)
+
+    def test_rejects_non_positive_cylinder_dimension(self):
+        packets = chunk_packets(proxy_urdf('<cylinder radius="0" length="2"/>'))
+        assembler = UrdfChunkAssembler()
+        with self.assertRaisesRegex(ValueError, "radius must be positive"):
+            for packet in packets:
+                assembler.consume(packet)
+
     def test_rejects_checksum_mismatch(self):
         packets = chunk_packets()
         packets[-1]["data"] = base64.b64encode(b"tampered").decode()

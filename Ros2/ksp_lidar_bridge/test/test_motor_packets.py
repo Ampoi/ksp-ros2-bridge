@@ -23,6 +23,8 @@ class MotorStateTests(unittest.TestCase):
                 "effort": -12.0,
                 "current": 1.25,
                 "target": math.pi,
+                "commandMode": "velocity",
+                "commandActive": True,
                 "powered": True,
                 "engaged": True,
                 "locked": False,
@@ -34,6 +36,8 @@ class MotorStateTests(unittest.TestCase):
         self.assertAlmostEqual(state.position, math.pi / 2)
         self.assertEqual(state.effort, -12.0)
         self.assertEqual(state.current, 1.25)
+        self.assertEqual(state.command_mode, "velocity")
+        self.assertTrue(state.command_active)
         self.assertTrue(state.powered)
 
     def test_rejects_nonfinite_state(self):
@@ -75,6 +79,9 @@ class MotorCommandTests(unittest.TestCase):
         self.assertEqual(commands[1]["velocity"], 0.2)
         self.assertEqual(commands[1]["effort"], 1500.0)
         self.assertEqual(commands[1]["sequence"], 7)
+        self.assertTrue(commands[1]["hasEnabled"])
+        self.assertTrue(commands[1]["enabled"])
+        self.assertEqual(commands[1]["timeoutSeconds"], 0.5)
 
     def test_builds_velocity_only_command(self):
         command = motor_commands_from_point(

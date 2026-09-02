@@ -1,0 +1,13 @@
+std_msgs/Header header
+string name
+string motor_type
+bool enabled
+uint8 mode
+float64 position
+float64 velocity
+float64 effort
+float64 target
+float64 current
+bool powered
+bool locked
+bool command_active

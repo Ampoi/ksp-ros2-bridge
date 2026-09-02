@@ -31,6 +31,8 @@ _ALLOWED_TAG_ATTRIBUTES = {
     "collision": set(),
     "geometry": set(),
     "box": {"size"},
+    "cylinder": {"radius", "length"},
+    "sphere": {"radius"},
 }
 
 
@@ -285,6 +287,18 @@ def _parse_proxy_urdf(
             size = _parse_vector(element.attrib.get("size"), "box size")
             if any(value <= 0.0 for value in size):
                 raise ValueError("proxy box dimensions must be positive")
+        elif element.tag == "cylinder":
+            if set(element.attrib) != {"radius", "length"}:
+                raise ValueError("proxy cylinder must contain radius and length")
+            if _strict_float(element.attrib["radius"], "cylinder radius") <= 0.0:
+                raise ValueError("proxy cylinder radius must be positive")
+            if _strict_float(element.attrib["length"], "cylinder length") <= 0.0:
+                raise ValueError("proxy cylinder length must be positive")
+        elif element.tag == "sphere":
+            if set(element.attrib) != {"radius"}:
+                raise ValueError("proxy sphere must contain one radius")
+            if _strict_float(element.attrib["radius"], "sphere radius") <= 0.0:
+                raise ValueError("proxy sphere radius must be positive")
         elif element.tag == "mass":
             if _strict_float(element.attrib.get("value"), "mass") <= 0.0:
                 raise ValueError("proxy mass must be positive")
@@ -308,14 +322,18 @@ def _parse_proxy_urdf(
             raise ValueError("proxy link contains an invalid child element")
         if [child.tag for child in link].count("inertial") != 1:
             raise ValueError("proxy link must contain exactly one inertial element")
-        if [child.tag for child in link].count("visual") != 1:
-            raise ValueError("proxy link must contain exactly one visual element")
-        if [child.tag for child in link].count("collision") != 1:
-            raise ValueError("proxy link must contain exactly one collision element")
+        visual_count = [child.tag for child in link].count("visual")
+        collision_count = [child.tag for child in link].count("collision")
+        if visual_count < 1 or visual_count > 48:
+            raise ValueError("proxy link visual count is out of bounds")
+        if collision_count < 1 or collision_count > 48:
+            raise ValueError("proxy link collision count is out of bounds")
         for geometry_owner in link.findall("visual") + link.findall("collision"):
             geometries = geometry_owner.findall("geometry")
-            if len(geometries) != 1 or len(geometries[0].findall("box")) != 1:
-                raise ValueError("proxy visual and collision must contain one box")
+            if len(geometries) != 1 or len(geometries[0]) != 1:
+                raise ValueError("proxy visual and collision must contain one primitive")
+            if geometries[0][0].tag not in {"box", "cylinder", "sphere"}:
+                raise ValueError("proxy geometry must be a box, cylinder, or sphere")
         links[name] = link
     if not links or len(links) > 2048:
         raise ValueError("proxy URDF link count is out of bounds")

@@ -14,7 +14,7 @@ setup(
     zip_safe=True,
     maintainer="Kerbal LiDAR Lab",
     maintainer_email="user@example.com",
-    description="Bridge KerbalLiDAR sensors, motors, and runtime URDF proxies to ROS2.",
+    description="Bridge KerbalLiDAR sensors, motors, propulsion, and runtime URDF proxies to ROS2.",
     license="MIT",
     test_suite="test.test_packet_conversion",
     entry_points={

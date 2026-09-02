@@ -20,6 +20,8 @@ class MotorStateData:
     powered: bool
     engaged: bool
     locked: bool
+    command_mode: str
+    command_active: bool
 
 
 def _finite_float(value: Any, field_name: str) -> float:
@@ -51,6 +53,8 @@ def motor_state_from_packet(packet: Dict[str, Any]) -> MotorStateData:
         powered=bool(packet.get("powered", False)),
         engaged=bool(packet.get("engaged", False)),
         locked=bool(packet.get("locked", False)),
+        command_mode=str(packet.get("commandMode") or "position").lower(),
+        command_active=bool(packet.get("commandActive", False)),
     )
 
 
@@ -93,12 +97,15 @@ def motor_commands_from_point(
                 "name": name,
                 "partFlightId": 0,
                 "mode": mode,
+                "hasEnabled": True,
+                "enabled": True,
                 "hasPosition": bool(point_positions),
                 "position": point_positions[index] if point_positions else 0.0,
                 "hasVelocity": bool(point_velocities),
                 "velocity": point_velocities[index] if point_velocities else 0.0,
                 "hasEffort": bool(point_efforts),
                 "effort": point_efforts[index] if point_efforts else 0.0,
+                "timeoutSeconds": 0.5,
                 "sequence": int(sequence),
             }
         )

@@ -17,11 +17,11 @@ namespace KerbalLiDAR
             NormalizeConfig();
 
             var originTransform = ResolveOriginTransform();
-            var forward = AxisToWorld(originTransform, forwardAxis);
+            var forward = ResolveScanForward(originTransform);
             var up = AxisToWorld(originTransform, upAxis);
             Orthonormalize(ref forward, ref up, originTransform);
 
-            var origin = originTransform.position + forward * Mathf.Max(0f, originOffsetMeters);
+            var origin = ResolveScanOrigin(originTransform, forward);
             var horizontalCount = 1;
             var verticalCount = 1;
             var rayCount = ResolveRayCounts(ref horizontalCount, ref verticalCount);

@@ -28,6 +28,23 @@ namespace KerbalLiDAR
             public Vector3 Size;
         }
 
+        private enum ProxyGeometryType
+        {
+            Box,
+            Cylinder,
+            Sphere
+        }
+
+        private struct ProxyGeometry
+        {
+            public ProxyGeometryType Type;
+            public Vector3 Center;
+            public Quaternion Rotation;
+            public Vector3 Size;
+            public float Radius;
+            public float Length;
+        }
+
         private void ProcessActiveVesselUrdf()
         {
             if (!ShouldPublishActiveVesselUrdf())
@@ -276,7 +293,8 @@ namespace KerbalLiDAR
 
         private static void AppendProxyLink(StringBuilder urdf, Part vesselPart, string linkName)
         {
-            var bounds = EstimateProxyBounds(vesselPart);
+            var geometries = BuildProxyGeometries(vesselPart);
+            var bounds = EstimateProxyBounds(geometries);
             var rosCenter = UnityVectorToRos(bounds.Center);
             var rosSize = UnitySizeToRos(bounds.Size);
             var massKg = Math.Max(0.001f, vesselPart.mass * 1000f);
@@ -296,18 +314,48 @@ namespace KerbalLiDAR
             urdf.Append("\" iyz=\"0\" izz=\"");
             AppendUrdfFloat(urdf, izz);
             urdf.Append("\"/>\n    </inertial>\n");
-            AppendBoxGeometry(urdf, "visual", rosCenter, rosSize);
-            AppendBoxGeometry(urdf, "collision", rosCenter, rosSize);
+            AppendProxyGeometries(urdf, "visual", geometries);
+            AppendProxyGeometries(urdf, "collision", geometries);
             urdf.Append("  </link>\n");
         }
 
-        private static void AppendBoxGeometry(StringBuilder urdf, string element, Vector3 center, Vector3 size)
+        private static void AppendProxyGeometries(
+            StringBuilder urdf,
+            string element,
+            IList<ProxyGeometry> geometries
+        )
         {
-            urdf.Append("    <").Append(element).Append(">\n      <origin xyz=\"");
-            AppendVector(urdf, center);
-            urdf.Append("\" rpy=\"0 0 0\"/>\n      <geometry><box size=\"");
-            AppendVector(urdf, size);
-            urdf.Append("\"/></geometry>\n    </").Append(element).Append(">\n");
+            foreach (var geometry in geometries)
+            {
+                var rosCenter = UnityVectorToRos(geometry.Center);
+                var rosRpy = RosQuaternionToRpy(UnityRotationToRos(geometry.Rotation));
+                urdf.Append("    <").Append(element).Append(">\n      <origin xyz=\"");
+                AppendVector(urdf, rosCenter);
+                urdf.Append("\" rpy=\"");
+                AppendVector(urdf, rosRpy);
+                urdf.Append("\"/>\n      <geometry>");
+                switch (geometry.Type)
+                {
+                    case ProxyGeometryType.Cylinder:
+                        urdf.Append("<cylinder radius=\"");
+                        AppendUrdfFloat(urdf, geometry.Radius);
+                        urdf.Append("\" length=\"");
+                        AppendUrdfFloat(urdf, geometry.Length);
+                        urdf.Append("\"/>");
+                        break;
+                    case ProxyGeometryType.Sphere:
+                        urdf.Append("<sphere radius=\"");
+                        AppendUrdfFloat(urdf, geometry.Radius);
+                        urdf.Append("\"/>");
+                        break;
+                    default:
+                        urdf.Append("<box size=\"");
+                        AppendVector(urdf, UnitySizeToRos(geometry.Size));
+                        urdf.Append("\"/>");
+                        break;
+                }
+                urdf.Append("</geometry>\n    </").Append(element).Append(">\n");
+            }
         }
 
         private static void AppendFixedJoint(
@@ -331,28 +379,418 @@ namespace KerbalLiDAR
             urdf.Append("\"/>\n  </joint>\n");
         }
 
-        private static ProxyBounds EstimateProxyBounds(Part vesselPart)
+        private static List<ProxyGeometry> BuildProxyGeometries(Part vesselPart)
         {
-            var hasBounds = false;
-            var minimum = Vector3.zero;
-            var maximum = Vector3.zero;
+            const int maximumGeometriesPerPart = 48;
+            var geometries = new List<ProxyGeometry>();
             var colliders = vesselPart.GetComponentsInChildren<Collider>();
             foreach (var collider in colliders)
             {
-                if (collider == null || !collider.enabled || FindPart(collider) != vesselPart)
+                if (
+                    collider == null
+                    || !collider.enabled
+                    || FindPart(collider) != vesselPart
+                    || geometries.Count >= maximumGeometriesPerPart
+                )
                 {
                     continue;
                 }
 
-                var bounds = collider.bounds;
+                var box = collider as BoxCollider;
+                if (box != null)
+                {
+                    geometries.Add(CreateBoxGeometry(vesselPart.transform, box.transform, box.center, box.size));
+                    continue;
+                }
+
+                var sphere = collider as SphereCollider;
+                if (sphere != null)
+                {
+                    geometries.Add(CreateSphereGeometry(vesselPart.transform, sphere.transform, sphere.center, sphere.radius));
+                    continue;
+                }
+
+                var capsule = collider as CapsuleCollider;
+                if (capsule != null)
+                {
+                    AppendCapsuleGeometries(geometries, vesselPart.transform, capsule, maximumGeometriesPerPart);
+                    continue;
+                }
+
+                var mesh = collider as MeshCollider;
+                if (mesh != null && mesh.sharedMesh != null)
+                {
+                    AppendMeshProxyGeometry(geometries, vesselPart.transform, mesh, maximumGeometriesPerPart);
+                }
+            }
+
+            if (geometries.Count == 0)
+            {
+                geometries.Add(new ProxyGeometry
+                {
+                    Type = ProxyGeometryType.Box,
+                    Center = Vector3.zero,
+                    Rotation = Quaternion.identity,
+                    Size = Vector3.one * 0.25f
+                });
+            }
+
+            return geometries;
+        }
+
+        private static ProxyGeometry CreateBoxGeometry(
+            Transform partTransform,
+            Transform geometryTransform,
+            Vector3 localCenter,
+            Vector3 localSize
+        )
+        {
+            return new ProxyGeometry
+            {
+                Type = ProxyGeometryType.Box,
+                Center = partTransform.InverseTransformPoint(geometryTransform.TransformPoint(localCenter)),
+                Rotation = RelativeRotation(partTransform, geometryTransform),
+                Size = MaxVector(
+                    Vector3.Scale(AbsVector(localSize), RelativeScale(partTransform, geometryTransform)),
+                    Vector3.one * 0.01f
+                )
+            };
+        }
+
+        private static ProxyGeometry CreateSphereGeometry(
+            Transform partTransform,
+            Transform geometryTransform,
+            Vector3 localCenter,
+            float localRadius
+        )
+        {
+            var scale = RelativeScale(partTransform, geometryTransform);
+            return new ProxyGeometry
+            {
+                Type = ProxyGeometryType.Sphere,
+                Center = partTransform.InverseTransformPoint(geometryTransform.TransformPoint(localCenter)),
+                Rotation = Quaternion.identity,
+                Radius = Mathf.Max(0.01f, Mathf.Abs(localRadius) * Mathf.Max(scale.x, Mathf.Max(scale.y, scale.z)))
+            };
+        }
+
+        private static void AppendCapsuleGeometries(
+            IList<ProxyGeometry> geometries,
+            Transform partTransform,
+            CapsuleCollider capsule,
+            int maximumGeometries
+        )
+        {
+            var scale = RelativeScale(partTransform, capsule.transform);
+            var axis = capsule.direction == 0 ? Vector3.right : capsule.direction == 1 ? Vector3.up : Vector3.forward;
+            var axisScale = capsule.direction == 0 ? scale.x : capsule.direction == 1 ? scale.y : scale.z;
+            var radialScale = capsule.direction == 0
+                ? Mathf.Max(scale.y, scale.z)
+                : capsule.direction == 1 ? Mathf.Max(scale.x, scale.z) : Mathf.Max(scale.x, scale.y);
+            var radius = Mathf.Max(0.01f, Mathf.Abs(capsule.radius) * radialScale);
+            var totalLength = Mathf.Max(radius * 2f, Mathf.Abs(capsule.height) * axisScale);
+            var cylinderLength = totalLength - radius * 2f;
+            var center = partTransform.InverseTransformPoint(capsule.transform.TransformPoint(capsule.center));
+            var colliderRotation = RelativeRotation(partTransform, capsule.transform);
+            var axisInPart = (colliderRotation * axis).normalized;
+
+            if (cylinderLength > 0.01f && geometries.Count < maximumGeometries)
+            {
+                geometries.Add(new ProxyGeometry
+                {
+                    Type = ProxyGeometryType.Cylinder,
+                    Center = center,
+                    Rotation = colliderRotation * Quaternion.FromToRotation(Vector3.forward, axis),
+                    Radius = radius,
+                    Length = cylinderLength
+                });
+            }
+
+            var capOffset = axisInPart * (cylinderLength * 0.5f);
+            if (geometries.Count < maximumGeometries)
+            {
+                geometries.Add(new ProxyGeometry
+                {
+                    Type = ProxyGeometryType.Sphere,
+                    Center = center + capOffset,
+                    Rotation = Quaternion.identity,
+                    Radius = radius
+                });
+            }
+            if (cylinderLength > 0.01f && geometries.Count < maximumGeometries)
+            {
+                geometries.Add(new ProxyGeometry
+                {
+                    Type = ProxyGeometryType.Sphere,
+                    Center = center - capOffset,
+                    Rotation = Quaternion.identity,
+                    Radius = radius
+                });
+            }
+        }
+
+        private static void AppendMeshProxyGeometry(
+            IList<ProxyGeometry> geometries,
+            Transform partTransform,
+            MeshCollider mesh,
+            int maximumGeometries
+        )
+        {
+            if (geometries.Count >= maximumGeometries)
+            {
+                return;
+            }
+
+            var bounds = mesh.sharedMesh.bounds;
+            var size = Vector3.Scale(AbsVector(bounds.size), RelativeScale(partTransform, mesh.transform));
+            var center = partTransform.InverseTransformPoint(mesh.transform.TransformPoint(bounds.center));
+            var rotation = RelativeRotation(partTransform, mesh.transform);
+            int cylinderAxis;
+            var geometryType = SelectMeshProxyGeometry(mesh.sharedMesh, size, out cylinderAxis);
+            if (geometryType == ProxyGeometryType.Sphere)
+            {
+                geometries.Add(new ProxyGeometry
+                {
+                    Type = ProxyGeometryType.Sphere,
+                    Center = center,
+                    Rotation = Quaternion.identity,
+                    Radius = Mathf.Max(0.01f, Mathf.Max(size.x, Mathf.Max(size.y, size.z)) * 0.5f)
+                });
+                return;
+            }
+
+            if (geometryType == ProxyGeometryType.Cylinder)
+            {
+                var diameter = cylinderAxis == 0
+                    ? (size.y + size.z) * 0.5f
+                    : cylinderAxis == 1 ? (size.x + size.z) * 0.5f : (size.x + size.y) * 0.5f;
+                var length = cylinderAxis == 0 ? size.x : cylinderAxis == 1 ? size.y : size.z;
+                var axis = cylinderAxis == 0 ? Vector3.right : cylinderAxis == 1 ? Vector3.up : Vector3.forward;
+                geometries.Add(new ProxyGeometry
+                {
+                    Type = ProxyGeometryType.Cylinder,
+                    Center = center,
+                    Rotation = rotation * Quaternion.FromToRotation(Vector3.forward, axis),
+                    Radius = Mathf.Max(0.01f, diameter * 0.5f),
+                    Length = Mathf.Max(0.01f, length)
+                });
+                return;
+            }
+
+            geometries.Add(new ProxyGeometry
+            {
+                Type = ProxyGeometryType.Box,
+                Center = center,
+                Rotation = rotation,
+                Size = MaxVector(size, Vector3.one * 0.01f)
+            });
+        }
+
+        private static ProxyGeometryType SelectMeshProxyGeometry(
+            Mesh mesh,
+            Vector3 scaledSize,
+            out int cylinderAxis
+        )
+        {
+            cylinderAxis = -1;
+            float boxError;
+            float sphereError;
+            Vector3 cylinderErrors;
+            if (!TryMeasureMeshSurface(mesh, out boxError, out sphereError, out cylinderErrors))
+            {
+                cylinderAxis = SimilarRadialAxes(scaledSize);
+                return cylinderAxis >= 0 ? ProxyGeometryType.Cylinder : ProxyGeometryType.Box;
+            }
+
+            var bestType = ProxyGeometryType.Box;
+            var bestError = boxError;
+            var largestSize = Mathf.Max(scaledSize.x, Mathf.Max(scaledSize.y, scaledSize.z));
+            var smallestSize = Mathf.Min(scaledSize.x, Mathf.Min(scaledSize.y, scaledSize.z));
+            var sphereAspectPenalty = largestSize <= 0.001f
+                ? 1f
+                : (largestSize - smallestSize) / largestSize * 0.5f;
+            var adjustedSphereError = sphereError + sphereAspectPenalty;
+            if (adjustedSphereError + 0.02f < bestError)
+            {
+                bestType = ProxyGeometryType.Sphere;
+                bestError = adjustedSphereError;
+            }
+
+            for (var axis = 0; axis < 3; axis++)
+            {
+                var firstRadialSize = axis == 0 ? scaledSize.y : scaledSize.x;
+                var secondRadialSize = axis == 2 ? scaledSize.y : scaledSize.z;
+                var radialMaximum = Mathf.Max(0.001f, Mathf.Max(firstRadialSize, secondRadialSize));
+                var radialPenalty = Mathf.Abs(firstRadialSize - secondRadialSize) / radialMaximum * 0.5f;
+                var surfaceError = axis == 0
+                    ? cylinderErrors.x
+                    : axis == 1 ? cylinderErrors.y : cylinderErrors.z;
+                var adjustedCylinderError = surfaceError + radialPenalty;
+                if (adjustedCylinderError + 0.02f < bestError)
+                {
+                    bestType = ProxyGeometryType.Cylinder;
+                    bestError = adjustedCylinderError;
+                    cylinderAxis = axis;
+                }
+            }
+
+            return bestType;
+        }
+
+        private static bool TryMeasureMeshSurface(
+            Mesh mesh,
+            out float boxError,
+            out float sphereError,
+            out Vector3 cylinderErrors
+        )
+        {
+            boxError = 0f;
+            sphereError = 0f;
+            cylinderErrors = Vector3.zero;
+            try
+            {
+                var vertices = mesh.vertices;
+                var triangles = mesh.triangles;
+                var bounds = mesh.bounds;
+                var extents = bounds.extents;
+                if (
+                    vertices == null
+                    || triangles == null
+                    || triangles.Length < 3
+                    || extents.x <= 0.0001f
+                    || extents.y <= 0.0001f
+                    || extents.z <= 0.0001f
+                )
+                {
+                    return false;
+                }
+
+                const int maximumSamples = 384;
+                var triangleCount = triangles.Length / 3;
+                var sampleStep = Math.Max(1, (triangleCount + maximumSamples - 1) / maximumSamples);
+                var sampleCount = 0;
+                for (var triangle = 0; triangle < triangleCount; triangle += sampleStep)
+                {
+                    var triangleOffset = triangle * 3;
+                    var firstIndex = triangles[triangleOffset];
+                    var secondIndex = triangles[triangleOffset + 1];
+                    var thirdIndex = triangles[triangleOffset + 2];
+                    if (
+                        firstIndex < 0 || firstIndex >= vertices.Length
+                        || secondIndex < 0 || secondIndex >= vertices.Length
+                        || thirdIndex < 0 || thirdIndex >= vertices.Length
+                    )
+                    {
+                        continue;
+                    }
+
+                    var point = (vertices[firstIndex] + vertices[secondIndex] + vertices[thirdIndex]) / 3f;
+                    var normalized = point - bounds.center;
+                    var x = Mathf.Abs(normalized.x / extents.x);
+                    var y = Mathf.Abs(normalized.y / extents.y);
+                    var z = Mathf.Abs(normalized.z / extents.z);
+                    boxError += Mathf.Min(Mathf.Abs(1f - x), Mathf.Min(Mathf.Abs(1f - y), Mathf.Abs(1f - z)));
+                    sphereError += Mathf.Abs(Mathf.Sqrt(x * x + y * y + z * z) - 1f);
+                    cylinderErrors.x += CylinderSurfaceError(x, y, z);
+                    cylinderErrors.y += CylinderSurfaceError(y, x, z);
+                    cylinderErrors.z += CylinderSurfaceError(z, x, y);
+                    sampleCount++;
+                }
+
+                if (sampleCount < 4)
+                {
+                    return false;
+                }
+
+                boxError /= sampleCount;
+                sphereError /= sampleCount;
+                cylinderErrors /= sampleCount;
+                return true;
+            }
+            catch (UnityException)
+            {
+                // Some imported collider meshes are not CPU-readable. Bounds-based selection remains available.
+                return false;
+            }
+        }
+
+        private static float CylinderSurfaceError(float axial, float firstRadial, float secondRadial)
+        {
+            var barrelError = Mathf.Abs(Mathf.Sqrt(firstRadial * firstRadial + secondRadial * secondRadial) - 1f);
+            var capError = Mathf.Abs(axial - 1f);
+            return Mathf.Min(barrelError, capError);
+        }
+
+        private static int SimilarRadialAxes(Vector3 size)
+        {
+            const float radialTolerance = 0.12f;
+            const float axialDifference = 0.18f;
+            if (Similar(size.y, size.z, radialTolerance) && !Similar(size.x, (size.y + size.z) * 0.5f, axialDifference))
+            {
+                return 0;
+            }
+            if (Similar(size.x, size.z, radialTolerance) && !Similar(size.y, (size.x + size.z) * 0.5f, axialDifference))
+            {
+                return 1;
+            }
+            if (Similar(size.x, size.y, radialTolerance) && !Similar(size.z, (size.x + size.y) * 0.5f, axialDifference))
+            {
+                return 2;
+            }
+            return -1;
+        }
+
+        private static bool Similar(float left, float right, float tolerance)
+        {
+            var scale = Mathf.Max(0.001f, Mathf.Max(Mathf.Abs(left), Mathf.Abs(right)));
+            return Mathf.Abs(left - right) / scale <= tolerance;
+        }
+
+        private static Vector3 RelativeScale(Transform partTransform, Transform geometryTransform)
+        {
+            return new Vector3(
+                partTransform.InverseTransformVector(geometryTransform.TransformVector(Vector3.right)).magnitude,
+                partTransform.InverseTransformVector(geometryTransform.TransformVector(Vector3.up)).magnitude,
+                partTransform.InverseTransformVector(geometryTransform.TransformVector(Vector3.forward)).magnitude
+            );
+        }
+
+        private static Quaternion RelativeRotation(Transform partTransform, Transform geometryTransform)
+        {
+            return (Quaternion.Inverse(partTransform.rotation) * geometryTransform.rotation).normalized;
+        }
+
+        private static Vector3 AbsVector(Vector3 value)
+        {
+            return new Vector3(Mathf.Abs(value.x), Mathf.Abs(value.y), Mathf.Abs(value.z));
+        }
+
+        private static Vector3 MaxVector(Vector3 left, Vector3 right)
+        {
+            return new Vector3(Mathf.Max(left.x, right.x), Mathf.Max(left.y, right.y), Mathf.Max(left.z, right.z));
+        }
+
+        private static ProxyBounds EstimateProxyBounds(IList<ProxyGeometry> geometries)
+        {
+            var hasBounds = false;
+            var minimum = Vector3.zero;
+            var maximum = Vector3.zero;
+            foreach (var geometry in geometries)
+            {
+                var size = geometry.Type == ProxyGeometryType.Box
+                    ? geometry.Size
+                    : geometry.Type == ProxyGeometryType.Sphere
+                        ? Vector3.one * geometry.Radius * 2f
+                        : new Vector3(geometry.Radius * 2f, geometry.Radius * 2f, geometry.Length);
+                var extents = size * 0.5f;
                 for (var corner = 0; corner < 8; corner++)
                 {
-                    var world = bounds.center + new Vector3(
-                        (corner & 1) == 0 ? -bounds.extents.x : bounds.extents.x,
-                        (corner & 2) == 0 ? -bounds.extents.y : bounds.extents.y,
-                        (corner & 4) == 0 ? -bounds.extents.z : bounds.extents.z
+                    var offset = new Vector3(
+                        (corner & 1) == 0 ? -extents.x : extents.x,
+                        (corner & 2) == 0 ? -extents.y : extents.y,
+                        (corner & 4) == 0 ? -extents.z : extents.z
                     );
-                    var local = vesselPart.transform.InverseTransformPoint(world);
+                    var local = geometry.Center + geometry.Rotation * offset;
                     if (!hasBounds)
                     {
                         minimum = local;
@@ -365,11 +803,6 @@ namespace KerbalLiDAR
                         maximum = Vector3.Max(maximum, local);
                     }
                 }
-            }
-
-            if (!hasBounds)
-            {
-                return new ProxyBounds { Center = Vector3.zero, Size = Vector3.one * 0.25f };
             }
 
             return new ProxyBounds

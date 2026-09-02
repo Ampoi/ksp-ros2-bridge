@@ -1,0 +1,10 @@
+std_msgs/Header header
+uint8 MODE_POSITION=0
+uint8 MODE_VELOCITY=1
+uint8 MODE_EFFORT=2
+uint8 mode
+bool enabled
+float64 position
+float64 velocity
+float64 effort
+float64 timeout_sec

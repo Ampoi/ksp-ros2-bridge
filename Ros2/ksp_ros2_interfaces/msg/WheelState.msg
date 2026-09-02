@@ -1,0 +1,11 @@
+std_msgs/Header header
+string name
+bool enabled
+bool grounded
+float64 angular_position
+float64 angular_velocity
+float64 steering_angle
+float64 drive_torque
+float64 brake_torque
+float64 slip
+float64 max_drive_torque

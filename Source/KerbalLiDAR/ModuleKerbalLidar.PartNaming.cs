@@ -13,7 +13,7 @@ namespace KerbalLiDAR
 
         private float nextPartNameValidationTime;
 
-        [KSPEvent(guiActive = false, guiActiveEditor = true, guiName = "Edit ROS2 Part Name", active = true)]
+        [KSPEvent(guiActive = false, guiActiveEditor = false, guiName = "Edit ROS2 Part Name", active = false)]
         public void EditPartName()
         {
             var pendingName = ResolvePartName();
@@ -139,6 +139,17 @@ namespace KerbalLiDAR
 
                 for (var moduleIndex = 0; moduleIndex < candidatePart.Modules.Count; moduleIndex++)
                 {
+                    var camera = candidatePart.Modules[moduleIndex] as ModuleKerbalRgbCamera;
+                    if (camera != null)
+                    {
+                        var cameraName = NormalizePartNameToken(camera.partName);
+                        if (!string.IsNullOrEmpty(cameraName))
+                        {
+                            usedNames.Add(cameraName);
+                        }
+                        continue;
+                    }
+
                     var module = candidatePart.Modules[moduleIndex] as ModuleKerbalLidar;
                     if (module == null)
                     {

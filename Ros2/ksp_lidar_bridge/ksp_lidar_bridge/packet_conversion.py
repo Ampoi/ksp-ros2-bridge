@@ -2,10 +2,12 @@ import json
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Mapping, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 
 Vector3 = Tuple[float, float, float]
+Quaternion = Tuple[float, float, float, float]
+_GOLDEN_ANGLE_RADIANS = 2.3999632
 
 
 @dataclass(frozen=True)
@@ -19,6 +21,12 @@ class LaserScanData:
     range_min: float
     range_max: float
     ranges: List[float]
+
+
+@dataclass(frozen=True)
+class SensorPose:
+    translation: Vector3
+    rotation: Quaternion
 
 
 def decode_datagram(data: bytes) -> Dict[str, Any]:
@@ -146,6 +154,12 @@ def points_from_packet(packet: Dict[str, Any]) -> List[Vector3]:
         return output
 
     directions = list(chunked_vectors(packet.get("directions")))
+    if (
+        not directions
+        and packet.get("coordinateFrame") == "ros_sensor"
+        and packet.get("layout") == "fibonacci-hemisphere"
+    ):
+        directions = fibonacci_hemisphere_directions(ray_count)
     output = []
     for index, distance in enumerate(ranges):
         if index >= len(directions):
@@ -161,6 +175,55 @@ def points_from_packet(packet: Dict[str, Any]) -> List[Vector3]:
             )
         )
     return output
+
+
+def fibonacci_hemisphere_directions(count: int) -> List[Vector3]:
+    """Recreate KSP's compact 3D layout in the canonical ROS sensor frame."""
+    if count <= 0:
+        return []
+    if count == 1:
+        return [(1.0, 0.0, 0.0)]
+
+    directions: List[Vector3] = []
+    for index in range(count):
+        forward = (index + 0.5) / count
+        radius = math.sqrt(max(0.0, 1.0 - forward * forward))
+        azimuth = index * _GOLDEN_ANGLE_RADIANS
+        directions.append(
+            (
+                forward,
+                -math.cos(azimuth) * radius,
+                math.sin(azimuth) * radius,
+            )
+        )
+    return directions
+
+
+def sensor_pose_from_packet(packet: Dict[str, Any]) -> Optional[SensorPose]:
+    """Read the ROS sensor frame pose relative to the owning URDF part link."""
+    if packet.get("coordinateFrame") != "ros_sensor":
+        return None
+
+    position = packet.get("framePosition")
+    rotation = packet.get("frameRotation")
+    if not isinstance(position, (list, tuple)) or len(position) != 3:
+        return None
+    if not isinstance(rotation, (list, tuple)) or len(rotation) != 4:
+        return None
+
+    translation = tuple(as_float(value, math.nan) for value in position)
+    quaternion = tuple(as_float(value, math.nan) for value in rotation)
+    if not all(math.isfinite(value) for value in translation + quaternion):
+        return None
+
+    magnitude = math.sqrt(sum(value * value for value in quaternion))
+    if magnitude < 1e-9:
+        return None
+    normalized = tuple(value / magnitude for value in quaternion)
+    return SensorPose(
+        translation=translation,  # type: ignore[arg-type]
+        rotation=normalized,  # type: ignore[arg-type]
+    )
 
 
 def laser_scan_from_packet(packet: Dict[str, Any]) -> LaserScanData:

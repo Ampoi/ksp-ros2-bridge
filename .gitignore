@@ -12,5 +12,8 @@ obj/
 *.log
 __pycache__/
 *.pyc
+node_modules/
+docs/.vitepress/cache/
+docs/.vitepress/dist/
 GameData/KerbalLiDAR/Plugins/*.dll
 GameData/KerbalLiDAR/Plugins/*.pdb

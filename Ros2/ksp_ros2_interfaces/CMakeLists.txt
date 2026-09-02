@@ -1,0 +1,25 @@
+cmake_minimum_required(VERSION 3.8)
+project(ksp_ros2_interfaces)
+
+find_package(ament_cmake REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
+find_package(std_msgs REQUIRED)
+
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/WheelCommand.msg"
+  "msg/WheelState.msg"
+  "msg/EngineCommand.msg"
+  "msg/EngineState.msg"
+  "msg/RcsCommand.msg"
+  "msg/RcsState.msg"
+  "msg/MotorCommand.msg"
+  "msg/MotorState.msg"
+  "msg/DockingPortCommand.msg"
+  "msg/DockingPortState.msg"
+  "msg/SeparationCommand.msg"
+  "msg/SeparationState.msg"
+  DEPENDENCIES std_msgs
+)
+
+ament_export_dependencies(rosidl_default_runtime)
+ament_package()

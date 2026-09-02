@@ -16,12 +16,15 @@ namespace KerbalLiDAR
         public string name;
         public long partFlightId;
         public string mode;
+        public bool hasEnabled;
+        public bool enabled;
         public bool hasPosition;
         public double position;
         public bool hasVelocity;
         public double velocity;
         public bool hasEffort;
         public double effort;
+        public double timeoutSeconds;
         public long sequence;
     }
 
@@ -40,10 +43,13 @@ namespace KerbalLiDAR
 
     internal static class KerbalRosMotorNames
     {
-        public static string Resolve(string configuredName, string fallbackPrefix, Part part)
+        public static string Resolve(string configuredName, string fallbackPrefix, Part part, PartModule module = null)
         {
             var candidate = string.IsNullOrEmpty(configuredName)
-                ? fallbackPrefix + "_" + (part == null ? "0" : part.flightID.ToString(CultureInfo.InvariantCulture))
+                ? fallbackPrefix + "_" + (part == null
+                    ? "0"
+                    : (part.persistentId != 0u ? part.persistentId : part.flightID).ToString(CultureInfo.InvariantCulture)) +
+                  "_" + KerbalRosActuatorNames.ModuleIndex(part, module).ToString(CultureInfo.InvariantCulture)
                 : configuredName;
             return Sanitize(candidate, fallbackPrefix);
         }
@@ -105,7 +111,12 @@ namespace KerbalLiDAR
     {
         public static Transform EnsureTransform(Part part, string transformName)
         {
-            var existing = part == null ? null : part.FindModelTransform(transformName);
+            if (part == null || part.transform == null || string.IsNullOrEmpty(transformName))
+            {
+                return null;
+            }
+
+            var existing = part.FindModelTransform(transformName);
             if (existing != null)
             {
                 return existing;
@@ -114,6 +125,9 @@ namespace KerbalLiDAR
             var gameObject = new GameObject(transformName);
             var modelRoot = part.transform.Find("model");
             gameObject.transform.SetParent(modelRoot == null ? part.transform : modelRoot, false);
+            gameObject.transform.localPosition = Vector3.zero;
+            gameObject.transform.localRotation = Quaternion.identity;
+            gameObject.transform.localScale = Vector3.one;
             gameObject.layer = part.gameObject.layer;
             return gameObject.transform;
         }
@@ -131,6 +145,14 @@ namespace KerbalLiDAR
                 return;
             }
 
+            for (var index = 0; index < parent.childCount; index++)
+            {
+                if (parent.GetChild(index).name.StartsWith("motor_visual", StringComparison.Ordinal))
+                {
+                    return;
+                }
+            }
+
             try
             {
                 var model = GameDatabase.Instance.GetModel(modelPath.Trim());
@@ -140,7 +162,7 @@ namespace KerbalLiDAR
                     return;
                 }
 
-                model.name = "motor_visual_" + parent.childCount.ToString(CultureInfo.InvariantCulture);
+                model.name = "motor_visual";
                 model.transform.SetParent(parent, false);
                 model.transform.localPosition = ParseVector3(position, Vector3.zero);
                 model.transform.localEulerAngles = ParseVector3(rotation, Vector3.zero);
@@ -161,6 +183,21 @@ namespace KerbalLiDAR
 
         public static GameObject AddIndicator(Part part, Transform parent, PrimitiveType primitiveType, Vector3 position, Vector3 scale, Color color)
         {
+            if (part == null || parent == null)
+            {
+                return null;
+            }
+
+            var existing = parent.Find("motor_indicator");
+            if (existing != null)
+            {
+                existing.localPosition = position;
+                existing.localRotation = Quaternion.identity;
+                existing.localScale = scale;
+                existing.gameObject.layer = part.gameObject.layer;
+                return existing.gameObject;
+            }
+
             var indicator = GameObject.CreatePrimitive(primitiveType);
             indicator.name = "motor_indicator";
             indicator.transform.SetParent(parent, false);
@@ -241,7 +278,9 @@ namespace KerbalLiDAR
             double target,
             bool powered,
             bool engaged,
-            bool locked)
+            bool locked,
+            string commandMode,
+            bool commandActive)
         {
             var part = motor.MotorPart;
             var vesselName = part != null && part.vessel != null ? part.vessel.vesselName : string.Empty;
@@ -264,6 +303,8 @@ namespace KerbalLiDAR
             AppendBoolean(builder, "powered", powered, false);
             AppendBoolean(builder, "engaged", engaged, false);
             AppendBoolean(builder, "locked", locked, false);
+            AppendString(builder, "commandMode", commandMode, false);
+            AppendBoolean(builder, "commandActive", commandActive, false);
             builder.Append('}');
             return builder.ToString();
         }
@@ -361,9 +402,23 @@ namespace KerbalLiDAR
 
         public void Update()
         {
+            UpdateManagedMotors();
             EnsureCommandClients();
             ReceiveCommands();
             SendStates();
+        }
+
+        private static void UpdateManagedMotors()
+        {
+            var elapsed = Mathf.Max(Time.deltaTime, 0.0001f);
+            for (var index = Motors.Count - 1; index >= 0; index--)
+            {
+                var servo = Motors[index] as ModuleKerbalRosServo;
+                if (servo != null)
+                {
+                    servo.ManagedUpdate(elapsed);
+                }
+            }
         }
 
         public void OnDestroy()
@@ -387,6 +442,7 @@ namespace KerbalLiDAR
 
         private void EnsureCommandClients()
         {
+            EnsureCommandClient(49011);
             for (var index = Motors.Count - 1; index >= 0; index--)
             {
                 var motor = Motors[index];
@@ -402,17 +458,27 @@ namespace KerbalLiDAR
                     continue;
                 }
 
-                try
-                {
-                    var client = new UdpClient(new IPEndPoint(IPAddress.Any, port));
-                    client.Client.Blocking = false;
-                    commandClients.Add(port, client);
-                    Debug.Log("[KerbalLiDAR] ROS motor commands listening on udp://0.0.0.0:" + port.ToString(CultureInfo.InvariantCulture));
-                }
-                catch (Exception exception)
-                {
-                    Warn("Could not bind ROS motor command UDP port " + port.ToString(CultureInfo.InvariantCulture) + ": " + exception.Message);
-                }
+                EnsureCommandClient(port);
+            }
+        }
+
+        private void EnsureCommandClient(int port)
+        {
+            if (port <= 0 || port > 65535 || commandClients.ContainsKey(port))
+            {
+                return;
+            }
+
+            try
+            {
+                var client = new UdpClient(new IPEndPoint(IPAddress.Any, port));
+                client.Client.Blocking = false;
+                commandClients.Add(port, client);
+                Debug.Log("[KerbalLiDAR] ROS commands listening on udp://0.0.0.0:" + port.ToString(CultureInfo.InvariantCulture));
+            }
+            catch (Exception exception)
+            {
+                Warn("Could not bind ROS command UDP port " + port.ToString(CultureInfo.InvariantCulture) + ": " + exception.Message);
             }
         }
 
@@ -427,6 +493,19 @@ namespace KerbalLiDAR
                         IPEndPoint sender = null;
                         var bytes = pair.Value.Receive(ref sender);
                         var json = Encoding.UTF8.GetString(bytes);
+                        if (KerbalRosVehicleManager.TryDispatch(json, pair.Key))
+                        {
+                            continue;
+                        }
+                        if (KerbalRosPropulsionManager.TryDispatch(json, pair.Key))
+                        {
+                            continue;
+                        }
+                        if (KerbalRosDockingManager.TryDispatch(json, pair.Key))
+                        {
+                            continue;
+                        }
+
                         var command = JsonUtility.FromJson<KerbalRosMotorCommand>(json);
                         if (command == null || command.type != "ksp_motor_command" || command.version != 1)
                         {

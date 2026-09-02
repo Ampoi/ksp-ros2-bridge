@@ -2,7 +2,7 @@
 <package format="3">
   <name>ksp_lidar_bridge</name>
   <version>0.2.0</version>
-  <description>Bridge KerbalLiDAR sensors, robotic motors, and active-vessel runtime URDF proxies to ROS2.</description>
+  <description>Bridge KerbalLiDAR sensors, robotic motors, vessel propulsion, and active-vessel runtime URDF proxies to ROS2.</description>
   <maintainer email="user@example.com">Kerbal LiDAR Lab</maintainer>
   <license>MIT</license>
 
@@ -11,6 +11,7 @@
   <exec_depend>rclpy</exec_depend>
   <exec_depend>diagnostic_msgs</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>ksp_ros2_interfaces</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>tf2_ros</exec_depend>

@@ -48,14 +48,17 @@ namespace KerbalLiDAR
         [KSPField(guiActive = true, guiName = "ROS Command")]
         public string rosCommandState = "Waiting";
 
-        private bool visualReady;
         private bool velocityMode;
         private float commandedVelocity;
         private float commandExpiresAt;
+        private bool commandActive;
+        private string activeCommandMode = "position";
         private GameObject pistonRod;
         private float previousStateExtension;
         private float stateVelocity;
         private bool stateVelocityInitialized;
+        private bool stockServoStarted;
+        private bool stockAttachJointStarted;
 
         Part IKerbalRosMotor.MotorPart { get { return part; } }
         string IKerbalRosMotor.JointName { get { return JointName; } }
@@ -67,25 +70,61 @@ namespace KerbalLiDAR
 
         private string JointName
         {
-            get { return KerbalRosMotorNames.Resolve(motorName, "linear", part); }
+            get { return KerbalRosMotorNames.Resolve(motorName, "linear", part, this); }
+        }
+
+        public override void OnAwake()
+        {
+            base.OnAwake();
+            EnsureVisuals();
         }
 
         public override void OnStartBeforePartAttachJoint(StartState state)
         {
             EnsureVisuals();
-            base.OnStartBeforePartAttachJoint(state);
+            StartStockAttachJoint(state);
         }
 
         public override void OnStart(StartState state)
         {
             EnsureVisuals();
-            base.OnStart(state);
             rosJointDisplay = JointName;
-            KerbalRosMotorUdpManager.Register(this);
+
+            // BaseServo rewires the driven attach node during OnStart. Doing that
+            // while a new part is still attached to the editor cursor interrupts
+            // EditorLogic.attachPart and leaves its placement ghost active.
+            if (!HighLogic.LoadedSceneIsEditor || part == null || part.isAttached)
+            {
+                StartStockServo(state);
+            }
+
+            if (HighLogic.LoadedSceneIsFlight)
+            {
+                KerbalRosMotorUdpManager.Register(this);
+            }
+        }
+
+        protected override void Update()
+        {
+            if (!stockServoStarted && HighLogic.LoadedSceneIsEditor && part != null && part.isAttached)
+            {
+                StartStockServo(StartState.Editor);
+                StartStockAttachJoint(StartState.Editor);
+            }
+
+            if (stockServoStarted)
+            {
+                base.Update();
+            }
         }
 
         protected override void OnFixedUpdate()
         {
+            if (!stockServoStarted)
+            {
+                return;
+            }
+
             UpdateVelocityCommand();
             base.OnFixedUpdate();
             UpdateStateVelocity();
@@ -101,7 +140,10 @@ namespace KerbalLiDAR
                 pistonRod = null;
             }
 
-            base.OnDestroy();
+            if (stockServoStarted)
+            {
+                base.OnDestroy();
+            }
         }
 
         void IKerbalRosMotor.ApplyRosCommand(KerbalRosMotorCommand command)
@@ -109,6 +151,23 @@ namespace KerbalLiDAR
             if (command == null)
             {
                 return;
+            }
+
+            if (command.hasEnabled)
+            {
+                if (command.enabled && !servoMotorIsEngaged)
+                {
+                    EngageMotor();
+                }
+                else if (!command.enabled)
+                {
+                    if (servoMotorIsEngaged) DisengageMotor();
+                    velocityMode = false;
+                    commandActive = false;
+                    targetExtension = currentExtension;
+                    rosCommandState = "Disabled";
+                    return;
+                }
             }
 
             if (command.hasEffort && IsFinite(command.effort))
@@ -124,6 +183,13 @@ namespace KerbalLiDAR
                 EngageMotor();
             }
 
+            activeCommandMode = string.IsNullOrEmpty(command.mode) ? "position" : command.mode.ToLowerInvariant();
+            var timeout = IsFinite(command.timeoutSeconds) && command.timeoutSeconds > 0.0
+                ? Mathf.Clamp((float)command.timeoutSeconds, 0.05f, 10f)
+                : Mathf.Max(0.05f, commandTimeoutSeconds);
+            commandExpiresAt = Time.realtimeSinceStartup + timeout;
+            commandActive = true;
+
             if (string.Equals(command.mode, "velocity", StringComparison.OrdinalIgnoreCase) &&
                 command.hasVelocity && IsFinite(command.velocity))
             {
@@ -137,7 +203,6 @@ namespace KerbalLiDAR
 
                 velocityMode = true;
                 commandedVelocity = (float)command.velocity;
-                commandExpiresAt = Time.realtimeSinceStartup + Mathf.Max(0.05f, commandTimeoutSeconds);
                 rosCommandState = "Velocity";
                 return;
             }
@@ -178,11 +243,23 @@ namespace KerbalLiDAR
                 targetExtension,
                 hasEnoughResources,
                 servoMotorIsEngaged,
-                servoIsLocked);
+                servoIsLocked,
+                activeCommandMode,
+                commandActive);
         }
 
         private void UpdateVelocityCommand()
         {
+            if (commandActive && Time.realtimeSinceStartup > commandExpiresAt)
+            {
+                commandActive = false;
+                velocityMode = false;
+                targetExtension = currentExtension;
+                if (servoMotorIsEngaged) DisengageMotor();
+                rosCommandState = "Command timeout";
+                return;
+            }
+
             if (!velocityMode)
             {
                 return;
@@ -205,13 +282,19 @@ namespace KerbalLiDAR
 
         private void EnsureVisuals()
         {
-            if (visualReady || part == null)
+            if (part == null)
             {
                 return;
             }
 
             var baseTransform = KerbalRosMotorVisuals.EnsureTransform(part, baseTransformName);
             var movingTransform = KerbalRosMotorVisuals.EnsureTransform(part, servoTransformName);
+            if (baseTransform == null || movingTransform == null)
+            {
+                Debug.LogError("[KerbalLiDAR] ROS linear motor could not create its fixed and moving transforms.");
+                return;
+            }
+
             KerbalRosMotorVisuals.AddStockModel(
                 part,
                 movingTransform,
@@ -223,10 +306,31 @@ namespace KerbalLiDAR
                 part,
                 baseTransform,
                 PrimitiveType.Cylinder,
-                new Vector3(0f, 0.19f, 0f),
+                new Vector3(0f, 0.1474114f, 0f),
                 new Vector3(0.12f, 0.001f, 0.12f),
                 new Color(0.72f, 0.75f, 0.78f));
-            visualReady = true;
+        }
+
+        private void StartStockServo(StartState state)
+        {
+            if (stockServoStarted)
+            {
+                return;
+            }
+
+            base.OnStart(state);
+            stockServoStarted = true;
+        }
+
+        private void StartStockAttachJoint(StartState state)
+        {
+            if (!stockServoStarted || stockAttachJointStarted)
+            {
+                return;
+            }
+
+            base.OnStartBeforePartAttachJoint(state);
+            stockAttachJointStarted = true;
         }
 
         private void UpdatePistonRod()
@@ -237,7 +341,7 @@ namespace KerbalLiDAR
             }
 
             var extension = Mathf.Max(0.002f, currentExtension);
-            pistonRod.transform.localPosition = new Vector3(0f, 0.1875f + extension * 0.5f, 0f);
+            pistonRod.transform.localPosition = new Vector3(0f, 0.1474114f + extension * 0.5f, 0f);
             pistonRod.transform.localScale = new Vector3(0.12f, extension * 0.5f, 0.12f);
         }
 

@@ -5,6 +5,7 @@ from ksp_lidar_bridge.packet_conversion import (
     chunked_vectors,
     decode_datagram,
     expired_topic_names,
+    fibonacci_hemisphere_directions,
     laser_scan_from_packet,
     lidar_topic_from_packet,
     lidar_topic_suffix,
@@ -13,6 +14,7 @@ from ksp_lidar_bridge.packet_conversion import (
     packet_part_name,
     points_from_packet,
     sanitize_ros_name,
+    sensor_pose_from_packet,
 )
 
 
@@ -78,6 +80,49 @@ class PointConversionTests(unittest.TestCase):
         packet = self.packet(directions=[[1, 0, 0], [0, 1, 0], [0, 0, -1]])
         self.assertEqual(points_from_packet(packet), [(2.0, 0.0, 0.0), (0.0, 0.0, -4.0)])
 
+    def test_reconstructs_compact_fibonacci_hemisphere_points(self):
+        packet = self.packet(
+            coordinateFrame="ros_sensor",
+            layout="fibonacci-hemisphere",
+        )
+        points = points_from_packet(packet)
+        expected = fibonacci_hemisphere_directions(3)
+        self.assertEqual(len(points), 2)
+        self.assertAlmostEqual(points[0][0], expected[0][0] * 2)
+        self.assertAlmostEqual(points[0][1], expected[0][1] * 2)
+        self.assertAlmostEqual(points[0][2], expected[0][2] * 2)
+        self.assertAlmostEqual(points[1][0], expected[2][0] * 4)
+        self.assertAlmostEqual(points[1][1], expected[2][1] * 4)
+        self.assertAlmostEqual(points[1][2], expected[2][2] * 4)
+
+    def test_single_fibonacci_ray_points_forward(self):
+        self.assertEqual(fibonacci_hemisphere_directions(1), [(1.0, 0.0, 0.0)])
+
+
+class SensorPoseTests(unittest.TestCase):
+    def test_reads_and_normalizes_ros_sensor_pose(self):
+        pose = sensor_pose_from_packet(
+            {
+                "coordinateFrame": "ros_sensor",
+                "framePosition": [1, 2, 3],
+                "frameRotation": [0, 0, 0, 2],
+            }
+        )
+        self.assertIsNotNone(pose)
+        self.assertEqual(pose.translation, (1.0, 2.0, 3.0))
+        self.assertEqual(pose.rotation, (0.0, 0.0, 0.0, 1.0))
+
+    def test_rejects_missing_or_invalid_sensor_pose(self):
+        self.assertIsNone(sensor_pose_from_packet({}))
+        self.assertIsNone(
+            sensor_pose_from_packet(
+                {
+                    "coordinateFrame": "ros_sensor",
+                    "framePosition": [0, 0, 0],
+                    "frameRotation": [0, 0, 0, 0],
+                }
+            )
+        )
 
 class ScanNormalizationTests(unittest.TestCase):
     def test_normalizes_ranges_to_requested_count(self):

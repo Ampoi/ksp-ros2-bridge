@@ -1,0 +1,9 @@
+std_msgs/Header header
+string name
+bool enabled
+bool operational
+bool flameout
+float64 throttle
+float64 thrust
+float64 max_thrust
+bool command_active

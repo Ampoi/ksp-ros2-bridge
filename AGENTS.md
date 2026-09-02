@@ -18,7 +18,7 @@ Default paths:
 
 - `KSPDIR=$HOME/.local/share/Steam/steamapps/common/Kerbal Space Program`
 - `ROS2_WS=$HOME/ros2_ws`
-- `ROS_SETUP=/opt/ros/humble/setup.bash`
+- `ROS_SETUP=/opt/ros/jazzy/setup.bash`
 
 If only one side changed, scoped runs are acceptable:
 

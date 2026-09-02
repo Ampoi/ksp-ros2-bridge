@@ -34,6 +34,21 @@ namespace KerbalLiDAR
         [KSPField]
         public float maxDistance = 2000f;
 
+        [KSPField(isPersistant = true, guiActive = true, guiActiveEditor = true, guiName = "Near Range m", guiFormat = "F0")]
+        [UI_FloatRange(minValue = 10f, maxValue = 30f, stepIncrement = 5f)]
+        public float nearRangeMeters = 30f;
+
+        [KSPField(isPersistant = true, guiActive = true, guiActiveEditor = true, guiName = "Medium Range m", guiFormat = "F0")]
+        [UI_FloatRange(minValue = 50f, maxValue = 150f, stepIncrement = 10f)]
+        public float mediumRangeMeters = 100f;
+
+        [KSPField(isPersistant = true, guiActive = true, guiActiveEditor = true, guiName = "Long Range m", guiFormat = "F0")]
+        [UI_FloatRange(minValue = 150f, maxValue = 250f, stepIncrement = 10f)]
+        public float longRangeMeters = 250f;
+
+        [KSPField(isPersistant = true)]
+        public string rangeProfile = "medium";
+
         [KSPField(isPersistant = true, guiActive = true, guiActiveEditor = true, guiName = "Scan Rate Hz", guiFormat = "F0")]
         [UI_FloatRange(minValue = 1f, maxValue = 60f, stepIncrement = 1f)]
         public float scanRateHz = 10f;
@@ -44,7 +59,7 @@ namespace KerbalLiDAR
         [KSPField]
         public int udpPort = 49010;
 
-        [KSPField(isPersistant = true, guiActive = true, guiActiveEditor = true, guiName = "ROS2 Part Name")]
+        [KSPField(isPersistant = true)]
         public string partName = "";
 
         // Kept for loading craft files made before partName was introduced.
@@ -116,7 +131,13 @@ namespace KerbalLiDAR
         public string rayOriginName = "";
 
         [KSPField]
+        public string rayOriginLocalPosition = "0, 0, 0";
+
+        [KSPField]
         public string forwardAxis = "-Y";
+
+        [KSPField]
+        public bool align3DToAttachNormal = true;
 
         [KSPField]
         public string upAxis = "+Z";
@@ -286,11 +307,11 @@ namespace KerbalLiDAR
 
             var started = Time.realtimeSinceStartup;
             var originTransform = ResolveOriginTransform();
-            var forward = AxisToWorld(originTransform, forwardAxis);
+            var forward = ResolveScanForward(originTransform);
             var up = AxisToWorld(originTransform, upAxis);
             Orthonormalize(ref forward, ref up, originTransform);
 
-            var origin = originTransform.position + forward * Mathf.Max(0f, originOffsetMeters);
+            var origin = ResolveScanOrigin(originTransform, forward);
             var horizontalCount = 1;
             var verticalCount = 1;
             var rayCount = ResolveRayCounts(ref horizontalCount, ref verticalCount);
@@ -335,7 +356,7 @@ namespace KerbalLiDAR
         {
             if (Is3DMode())
             {
-                SetHemispherePreset(64f);
+                Set3DRangeProfile("near");
                 return;
             }
 
@@ -347,7 +368,7 @@ namespace KerbalLiDAR
         {
             if (Is3DMode())
             {
-                SetHemispherePreset(160f);
+                Set3DRangeProfile("medium");
                 return;
             }
 
@@ -359,7 +380,7 @@ namespace KerbalLiDAR
         {
             if (Is3DMode())
             {
-                SetHemispherePreset(512f);
+                Set3DRangeProfile("long");
                 return;
             }
 
@@ -374,9 +395,9 @@ namespace KerbalLiDAR
             UpdateUi();
         }
 
-        private void SetHemispherePreset(float density)
+        private void Set3DRangeProfile(string profile)
         {
-            hemisphereDensity = density;
+            rangeProfile = profile;
             NormalizeConfig();
             UpdateUi();
         }
@@ -387,6 +408,14 @@ namespace KerbalLiDAR
             var rayCount = useHemisphere ? horizontalCount : horizontalCount * verticalCount;
             lastRayCount = rayCount;
             lastHitCount = 0;
+
+            var sensorRotation = Quaternion.LookRotation(forward, up);
+            var worldToSensorRotation = Quaternion.Inverse(sensorRotation);
+            var partTransform = part != null && part.transform != null ? part.transform : transform;
+            var sensorPositionInPart = UnityVectorToRos(partTransform.InverseTransformPoint(origin));
+            var sensorRotationInPart = UnityRotationToRos(
+                Quaternion.Inverse(partTransform.rotation) * sensorRotation
+            );
 
             var ranges = new StringBuilder(lastRayCount * 8);
             var hitMask = new StringBuilder(lastRayCount * 2);
@@ -434,7 +463,11 @@ namespace KerbalLiDAR
                         hitMask.Append('1');
                         if (points != null)
                         {
-                            AppendVector3OrNull(points, hit.point, true);
+                            AppendVector3OrNull(
+                                points,
+                                UnityVectorToRos(worldToSensorRotation * (hit.point - origin)),
+                                true
+                            );
                         }
                     }
                     else
@@ -449,7 +482,11 @@ namespace KerbalLiDAR
 
                     if (directions != null)
                     {
-                        AppendVector3OrNull(directions, direction, true);
+                        AppendVector3OrNull(
+                            directions,
+                            UnityVectorToRos(worldToSensorRotation * direction),
+                            true
+                        );
                     }
 
                     var debugDistance = hasHit ? hit.distance : Mathf.Min(maxDistance, 100f);
@@ -493,8 +530,11 @@ namespace KerbalLiDAR
             AppendProperty(packetBuilder, "scanRateHz", streamAt20Fps ? 20f : scanRateHz, false);
             AppendProperty(packetBuilder, "maxDistance", maxDistance, false);
             AppendProperty(packetBuilder, "layout", useHemisphere ? "fibonacci-hemisphere" : "vertical-major", false);
+            AppendProperty(packetBuilder, "coordinateFrame", "ros_sensor", false);
             AppendProperty(packetBuilder, "hitCount", lastHitCount, false);
-            AppendArrayProperty(packetBuilder, "origin", delegate(StringBuilder builder) { AppendVector3OrNull(builder, origin, true); }, false);
+            AppendArrayProperty(packetBuilder, "origin", delegate(StringBuilder builder) { AppendVector3OrNull(builder, Vector3.zero, true); }, false);
+            AppendArrayProperty(packetBuilder, "framePosition", delegate(StringBuilder builder) { AppendVector3OrNull(builder, sensorPositionInPart, true); }, false);
+            AppendArrayProperty(packetBuilder, "frameRotation", delegate(StringBuilder builder) { AppendQuaternion(builder, sensorRotationInPart); }, false);
             AppendRawArrayProperty(packetBuilder, "ranges", ranges, false);
             AppendRawArrayProperty(packetBuilder, "hitMask", hitMask, false);
             if (points != null)
@@ -514,7 +554,9 @@ namespace KerbalLiDAR
         {
             var yaw = AngleAt(horizontal, horizontalCount, horizontalFovDegrees);
             var pitch = AngleAt(vertical, verticalCount, verticalFovDegrees);
-            var yawRotation = Quaternion.AngleAxis(yaw, up);
+            // LaserScan angles increase counter-clockwise around ROS +Z. Unity's
+            // handedness requires the opposite AngleAxis sign for the same order.
+            var yawRotation = Quaternion.AngleAxis(-yaw, up);
             var yawedForward = yawRotation * forward;
             var yawedRight = yawRotation * right;
             return (Quaternion.AngleAxis(-pitch, yawedRight) * yawedForward).normalized;
@@ -600,6 +642,34 @@ namespace KerbalLiDAR
             }
 
             return root;
+        }
+
+        private Vector3 ResolveScanForward(Transform originTransform)
+        {
+            if (!Is3DMode() || !align3DToAttachNormal)
+            {
+                return AxisToWorld(originTransform, forwardAxis);
+            }
+
+            // node_attach is configured so its orientation points from the
+            // model's mounting face toward the sensor's visible front side.
+            if (part != null && part.transform != null && part.srfAttachNode != null)
+            {
+                var localOutwardNormal = part.srfAttachNode.orientation;
+                if (localOutwardNormal.sqrMagnitude >= 0.0001f)
+                {
+                    return part.transform.TransformDirection(localOutwardNormal).normalized;
+                }
+            }
+
+            return originTransform.forward.normalized;
+        }
+
+        private Vector3 ResolveScanOrigin(Transform originTransform, Vector3 forward)
+        {
+            var localPosition = ParseConfigVector3(rayOriginLocalPosition, Vector3.zero);
+            return originTransform.TransformPoint(localPosition)
+                + forward * Mathf.Max(0f, originOffsetMeters);
         }
 
         private static Transform FindChildRecursive(Transform root, string childName)
@@ -732,7 +802,10 @@ namespace KerbalLiDAR
         {
             horizontalLaserCount = Mathf.Clamp(Mathf.Round(horizontalLaserCount), 1f, 2048f);
             verticalLaserCount = Mathf.Clamp(Mathf.Round(verticalLaserCount), 1f, 128f);
-            hemisphereDensity = Mathf.Clamp(Mathf.Round(hemisphereDensity), 1f, 1024f);
+            nearRangeMeters = Mathf.Clamp(Mathf.Round(nearRangeMeters / 5f) * 5f, 10f, 30f);
+            mediumRangeMeters = Mathf.Clamp(Mathf.Round(mediumRangeMeters / 10f) * 10f, 50f, 150f);
+            longRangeMeters = Mathf.Clamp(Mathf.Round(longRangeMeters / 10f) * 10f, 150f, 250f);
+            Normalize3DRangeProfile();
             horizontalFovDegrees = Mathf.Clamp(horizontalFovDegrees, 0f, 360f);
             verticalFovDegrees = Mathf.Clamp(verticalFovDegrees, 0f, 180f);
             maxDistance = Mathf.Max(0.1f, maxDistance);
@@ -756,6 +829,33 @@ namespace KerbalLiDAR
             rayBudget = FormatRayBudget(horizontalCount, verticalCount, rayCount);
         }
 
+        private void Normalize3DRangeProfile()
+        {
+            if (!Is3DMode())
+            {
+                hemisphereDensity = Mathf.Clamp(Mathf.Round(hemisphereDensity), 1f, 1024f);
+                return;
+            }
+
+            rangeProfile = (rangeProfile ?? "").Trim().ToLowerInvariant();
+            switch (rangeProfile)
+            {
+                case "near":
+                    maxDistance = nearRangeMeters;
+                    hemisphereDensity = 160f;
+                    break;
+                case "long":
+                    maxDistance = longRangeMeters;
+                    hemisphereDensity = 512f;
+                    break;
+                default:
+                    rangeProfile = "medium";
+                    maxDistance = mediumRangeMeters;
+                    hemisphereDensity = 320f;
+                    break;
+            }
+        }
+
         private bool Is3DMode()
         {
             return string.Equals(sensorMode, "3D", StringComparison.OrdinalIgnoreCase);
@@ -768,19 +868,27 @@ namespace KerbalLiDAR
             Fields["horizontalLaserCount"].guiActiveEditor = !threeDimensional;
             Fields["verticalLaserCount"].guiActive = false;
             Fields["verticalLaserCount"].guiActiveEditor = false;
-            Fields["hemisphereDensity"].guiActive = threeDimensional;
-            Fields["hemisphereDensity"].guiActiveEditor = threeDimensional;
+            Fields["hemisphereDensity"].guiActive = false;
+            Fields["hemisphereDensity"].guiActiveEditor = false;
+            Fields["nearRangeMeters"].guiActive = threeDimensional && rangeProfile == "near";
+            Fields["nearRangeMeters"].guiActiveEditor = threeDimensional && rangeProfile == "near";
+            Fields["mediumRangeMeters"].guiActive = threeDimensional && rangeProfile == "medium";
+            Fields["mediumRangeMeters"].guiActiveEditor = threeDimensional && rangeProfile == "medium";
+            Fields["longRangeMeters"].guiActive = threeDimensional && rangeProfile == "long";
+            Fields["longRangeMeters"].guiActiveEditor = threeDimensional && rangeProfile == "long";
             Fields["rayBudget"].guiActive = true;
             Fields["rayBudget"].guiActiveEditor = true;
+            Events["SetLowPreset"].guiName = threeDimensional ? "3D Range: Near (10-30 m)" : "LiDAR Preset: Low";
+            Events["SetMediumPreset"].guiName = threeDimensional ? "3D Range: Medium (50-150 m)" : "LiDAR Preset: Medium";
+            Events["SetHighPreset"].guiName = threeDimensional ? "3D Range: Long (150-250 m)" : "LiDAR Preset: High";
             Events["ToggleRadarLines"].guiName = radarLinesVisible ? "Hide Laser Preview" : "Show Laser Preview";
         }
 
         private string ResolvePartName()
         {
-            if (!string.IsNullOrEmpty(partName))
-            {
-                return partName;
-            }
+            var legacy = !string.IsNullOrEmpty(partName) ? partName : lidarName;
+            var resolved = ModuleKerbalRosSensorId.Resolve(part, legacy);
+            if (!string.IsNullOrEmpty(resolved)) return resolved;
 
             if (!string.IsNullOrEmpty(lidarName))
             {
