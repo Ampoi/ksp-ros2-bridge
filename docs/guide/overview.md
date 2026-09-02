@@ -27,7 +27,7 @@ KerbalLiDARは、KSP 1.xのFlightシーンとROS2ノードの間を2本のUDP経
 | Kerbal LiDAR 3D | `sensor_msgs/msg/PointCloud2` | 前方半球点群 |
 | Kerbal ROS2 RGB Camera | `Image` + `CameraInfo` | RGB画像と内部パラメーター |
 | ROS2 Size-0 Axial Servo | `JointTrajectory` / `JointState` | 回転軸制御 |
-| ROS2 Size-0 Linear Motor | `JointTrajectory` / `JointState` | 直動軸制御 |
+| ROS2 Telescoping I-Beam Actuator | `JointTrajectory` / `JointState` | 最大約2倍に伸びる直動軸制御 |
 | KSP標準Engine / RCS | `String` / `Float64` / `Twist` | 推進・6軸入力 |
 | KSP標準Wheel / Engine / RCS | `ksp_ros2_interfaces` | パーツ単位の型付き制御・状態 |
 | KSP標準ドッキングポート | `DockingPortCommand/State` + `Image` | 状態、切離し、選択式ポートカメラ |

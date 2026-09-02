@@ -1,0 +1,8 @@
+*
+!package.json
+!package-lock.json
+!vercel.json
+!docs/
+!docs/**
+docs/.vitepress/cache/
+docs/.vitepress/dist/

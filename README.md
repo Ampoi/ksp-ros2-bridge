@@ -207,9 +207,9 @@ Ground Truthは操作機体を選択した地点を原点とする東・北・�
 追加パーツ:
 
 - `ROS2 Size-0 Axial Servo`: 回転軸。可動範囲は-180〜180度、既定速度は45度/s、定格トルクは250 N·m
-- `ROS2 Size-0 Linear Motor`: 直動軸。可動範囲は0〜1.5 m、既定速度は0.25 m/s、定格推力は4000 N
+- `ROS2 Telescoping I-Beam Actuator`: M-Beam 200 Pocket型の直動軸。可動範囲は0〜1.6 mで、縮長約1.6 mから全長約3.2 mまで伸びる。既定速度は0.25 m/s、定格推力は4000 N
 
-どちらも`bottom`側を親パーツへ、動かしたい構造物を`top`側へ取り付けます。モデルはベースKSPのFL-R20とClamp-O-Tron Jr.を組み合わせているため、新規モデルファイルは不要です。
+どちらも`bottom`側を親パーツへ、動かしたい構造物を`top`側へ取り付けます。モデルはベースKSPのFL-R20とM-Beam 200 I-Beam Pocket Editionを利用しているため、新規モデルファイルは不要です。
 
 ROS2ブリッジを起動すると、KSPは状態をUDP 49010へ送り、ブリッジは指令をUDP 49011へ返します。モーター名を未設定にした場合は、KSPの`partFlightId`を使って`servo_<id>`または`linear_<id>`になります。
 

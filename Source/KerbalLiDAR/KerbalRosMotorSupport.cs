@@ -417,6 +417,13 @@ namespace KerbalLiDAR
                 if (servo != null)
                 {
                     servo.ManagedUpdate(elapsed);
+                    continue;
+                }
+
+                var linearMotor = Motors[index] as ModuleKerbalRosLinearMotor;
+                if (linearMotor != null)
+                {
+                    linearMotor.ManagedUpdate(elapsed);
                 }
             }
         }
@@ -505,7 +512,6 @@ namespace KerbalLiDAR
                         {
                             continue;
                         }
-
                         var command = JsonUtility.FromJson<KerbalRosMotorCommand>(json);
                         if (command == null || command.type != "ksp_motor_command" || command.version != 1)
                         {

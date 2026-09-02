@@ -533,11 +533,24 @@ namespace KerbalLiDAR
             var rotation = Quaternion.AngleAxis(deltaDegrees, axis);
             var drivenParts = new List<Part>();
             CollectPartBranch(drivenNode.attachedPart, drivenParts);
+
+            // KSP can parent editor part transforms so moving an ancestor may
+            // immediately move its descendants. Snapshot the whole branch
+            // before applying anything; otherwise deeper parts receive the
+            // same delta once per ancestor and the assembly fans apart.
+            var originalPositions = new Vector3[drivenParts.Count];
+            var originalRotations = new Quaternion[drivenParts.Count];
+            for (var index = 0; index < drivenParts.Count; index++)
+            {
+                originalPositions[index] = drivenParts[index].transform.position;
+                originalRotations[index] = drivenParts[index].transform.rotation;
+            }
+
             for (var index = 0; index < drivenParts.Count; index++)
             {
                 var child = drivenParts[index];
-                child.transform.position = pivot + rotation * (child.transform.position - pivot);
-                child.transform.rotation = rotation * child.transform.rotation;
+                child.transform.position = pivot + rotation * (originalPositions[index] - pivot);
+                child.transform.rotation = rotation * originalRotations[index];
             }
         }
 

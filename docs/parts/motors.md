@@ -7,9 +7,9 @@
 | パーツ | joint type | 可動範囲 | 既定速度 | 定格effort |
 |---|---|---:|---:|---:|
 | ROS2 Size-0 Axial Servo | `revolute` | -π〜π rad | 45°/s | 250 N·m |
-| ROS2 Size-0 Linear Motor | `prismatic` | 0〜1.5 m | 0.25 m/s | 4000 N |
+| ROS2 Telescoping I-Beam Actuator | `prismatic` | 0〜1.6 m | 0.25 m/s | 4000 N |
 
-両方とも`bottom`側を親構造へ、動かすパーツ群を`top`側へ取り付けます。
+両方とも`bottom`側を親構造へ、動かすパーツ群を`top`側へ取り付けます。I-Beam Actuatorは両端にstack nodeがあり、縮長時はM-Beam 200 Pocket 1本分の約1.6 m、最大1.6 m伸長して全長約3.2 mになります。
 
 ## 入出力Topic
 
