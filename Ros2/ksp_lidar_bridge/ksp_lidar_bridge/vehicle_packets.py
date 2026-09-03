@@ -1,7 +1,7 @@
 import json
 import math
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Set, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Set, Tuple
 
 from .packet_conversion import as_float, as_int, sanitize_ros_name
 
@@ -26,15 +26,26 @@ def _vector(packet: Mapping[str, Any], field: str, count: int) -> Tuple[float, .
     return tuple(_finite(value, field) for value in raw)
 
 
+def _optional_vector(
+    packet: Mapping[str, Any], field: str, count: int
+) -> Optional[Tuple[float, ...]]:
+    if field not in packet:
+        return None
+    return _vector(packet, field, count)
+
+
 @dataclass(frozen=True)
 class GroundTruthData:
     vessel_id: str
     vessel_name: str
     origin_sequence: int
+    universal_time: float
     position: Vector3
     rotation: Quaternion
     linear_velocity: Vector3
     angular_velocity: Vector3
+    linear_velocity_body: Optional[Vector3]
+    angular_velocity_body: Optional[Vector3]
     linear_acceleration: Vector3
     angular_acceleration: Vector3
 
@@ -51,10 +62,17 @@ def ground_truth_from_packet(packet: Mapping[str, Any]) -> GroundTruthData:
         vessel_id=str(packet.get("vesselId") or ""),
         vessel_name=str(packet.get("vessel") or ""),
         origin_sequence=max(0, as_int(packet.get("originSequence"), 0)),
+        universal_time=_finite(packet.get("universalTime", 0.0), "universalTime"),
         position=_vector(packet, "position", 3),  # type: ignore[arg-type]
         rotation=rotation,  # type: ignore[arg-type]
         linear_velocity=_vector(packet, "linearVelocity", 3),  # type: ignore[arg-type]
         angular_velocity=_vector(packet, "angularVelocity", 3),  # type: ignore[arg-type]
+        linear_velocity_body=_optional_vector(  # type: ignore[arg-type]
+            packet, "linearVelocityBody", 3
+        ),
+        angular_velocity_body=_optional_vector(  # type: ignore[arg-type]
+            packet, "angularVelocityBody", 3
+        ),
         linear_acceleration=_vector(packet, "linearAcceleration", 3),  # type: ignore[arg-type]
         angular_acceleration=_vector(packet, "angularAcceleration", 3),  # type: ignore[arg-type]
     )
@@ -129,7 +147,15 @@ def actuator_names_to_remove(
     ]
 
 
-def body_wrench_command(force: Vector3, torque: Vector3, sequence: int, timeout: float) -> Dict[str, Any]:
+def body_wrench_command(
+    force: Vector3,
+    torque: Vector3,
+    sequence: int,
+    timeout: float,
+    vessel_id: str,
+    controller_id: str,
+    lease_id: str,
+) -> Dict[str, Any]:
     values = tuple(force) + tuple(torque) + (timeout,)
     if not all(math.isfinite(float(value)) for value in values):
         raise ValueError("body wrench values must be finite")
@@ -137,16 +163,74 @@ def body_wrench_command(force: Vector3, torque: Vector3, sequence: int, timeout:
         raise ValueError("timeout must be between 0.05 and 10 seconds")
     return {
         "type": "ksp_body_wrench_command",
-        "version": 1,
+        "version": 2,
         "frame": "base_link",
+        "vesselId": _bounded_identity(vessel_id, "vessel_id"),
+        "controllerId": _bounded_identity(controller_id, "controller_id"),
+        "leaseId": _bounded_identity(lease_id, "lease_id"),
         "force": list(force),
         "torque": list(torque),
         "timeoutSeconds": float(timeout),
-        "sequence": int(sequence),
+        "sequence": _positive_sequence(sequence),
     }
 
 
-def actuator_command(kind: str, name: str, values: Mapping[str, Any], sequence: int) -> Dict[str, Any]:
+def control_authority_command(
+    action: str,
+    vessel_id: str,
+    controller_id: str,
+    lease_id: str,
+    priority: int,
+    lease_duration: float,
+    suppress_sas: bool,
+    sequence: int,
+) -> Dict[str, Any]:
+    normalized_action = str(action or "").strip().lower()
+    if normalized_action not in {
+        "acquire", "renew", "release", "emergency_stop", "clear_emergency_stop"
+    }:
+        raise ValueError("unsupported control authority action")
+    duration = _finite(lease_duration, "lease_duration")
+    if normalized_action in {"acquire", "renew"} and not 0.1 <= duration <= 10.0:
+        raise ValueError("lease_duration must be between 0.1 and 10 seconds")
+    if isinstance(priority, bool) or not isinstance(priority, int):
+        raise ValueError("priority must be an integer")
+    return {
+        "type": "ksp_control_authority_command",
+        "version": 2,
+        "action": normalized_action,
+        "vesselId": _bounded_identity(vessel_id, "vessel_id"),
+        "controllerId": _bounded_identity(controller_id, "controller_id"),
+        "leaseId": _bounded_identity(lease_id, "lease_id"),
+        "priority": priority,
+        "leaseDurationSeconds": duration,
+        "suppressSas": bool(suppress_sas),
+        "sequence": _positive_sequence(sequence),
+    }
+
+
+def _bounded_identity(value: Any, field: str) -> str:
+    normalized = str(value or "").strip()
+    if not normalized or len(normalized) > 64:
+        raise ValueError(f"{field} must contain 1 to 64 characters")
+    return normalized
+
+
+def _positive_sequence(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError("sequence must be a positive integer")
+    return value
+
+
+def actuator_command(
+    kind: str,
+    name: str,
+    values: Mapping[str, Any],
+    sequence: int,
+    vessel_id: str,
+    controller_id: str,
+    lease_id: str,
+) -> Dict[str, Any]:
     normalized_kind = str(kind or "").lower()
     if normalized_kind not in SUPPORTED_ACTUATOR_KINDS:
         raise ValueError(f"unsupported actuator type: {normalized_kind}")
@@ -156,12 +240,15 @@ def actuator_command(kind: str, name: str, values: Mapping[str, Any], sequence: 
         raise ValueError("timeoutSeconds must be between 0.05 and 10 seconds")
     command: Dict[str, Any] = {
         "type": "ksp_actuator_command",
-        "version": 1,
+        "version": 2,
         "actuatorType": normalized_kind,
         "name": normalized_name,
+        "vesselId": _bounded_identity(vessel_id, "vessel_id"),
+        "controllerId": _bounded_identity(controller_id, "controller_id"),
+        "leaseId": _bounded_identity(lease_id, "lease_id"),
         "enabled": bool(values.get("enabled", True)),
         "timeoutSeconds": timeout,
-        "sequence": int(sequence),
+        "sequence": _positive_sequence(sequence),
     }
     for key, value in values.items():
         if key in ("enabled", "timeoutSeconds"):

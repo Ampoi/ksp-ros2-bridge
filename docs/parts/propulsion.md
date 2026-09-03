@@ -10,9 +10,9 @@ Flight中のactive vesselにあるKSP標準`ModuleEngines` / `ModuleEnginesFX`�
 | 出力 | `/ksp_vessel/actuators/propulsion/state` | `ksp_ros2_interfaces/msg/EngineState` | `id`付きEngine状態 |
 | 入力 | `/ksp_vessel/actuators/rcs/command` | `ksp_ros2_interfaces/msg/RcsCommand` | `id`で指定するRCS指令 |
 | 出力 | `/ksp_vessel/actuators/rcs/state` | `ksp_ros2_interfaces/msg/RcsState` | `id`付きRCS状態 |
-| 入力 | `/ksp_vessel/actuators/propulsion/main_throttle` | `std_msgs/msg/Float64` | メインスロットル`0.0..1.0` |
-| 入力 | `/ksp_vessel/actuators/rcs/twist_command` | `geometry_msgs/msg/Twist` | RCS 6軸入力、各`-1.0..1.0` |
-| 入力 | `/ksp_vessel/actuators/propulsion/json_command` | `std_msgs/msg/String` | 互換用JSON指令 |
+| 入力 | `/ksp_vessel/actuators/propulsion/main_throttle` | `std_msgs/msg/Float64` | legacy互換メインスロットル`0.0..1.0` |
+| 入力 | `/ksp_vessel/actuators/rcs/twist_command` | `geometry_msgs/msg/Twist` | legacy互換RCS 6軸入力、各`-1.0..1.0` |
+| 入力 | `/ksp_vessel/actuators/propulsion/json_command` | `std_msgs/msg/String` | legacy互換JSON指令 |
 | 出力 | `/ksp_vessel/actuators/propulsion/json_state` | `std_msgs/msg/String` | 互換用JSON状態、10 Hz |
 
 ## State JSON
@@ -44,6 +44,8 @@ ros2 topic echo /ksp_vessel/actuators/propulsion/json_state
 ```
 
 ## 個別モジュール指令
+
+この節から「RCS 6軸」までの入力は所有権を持たないlegacy互換APIで、既定では無効です。移行作業で必要な場合だけbridgeを`--enable-legacy-control`付きで起動してください。新規コードは後述の型付きTopicと[authority lease](/api/vehicle-control)を使用します。
 
 `String.data`にはJSON objectを入れます。複数moduleは`commands`配列へまとめられます。
 
@@ -110,15 +112,17 @@ Engine IDは`engine_<persistentId>_<moduleIndex>`です。commandはReliable、s
 | EngineCommand field | 単位 | 内容 |
 |---|---|---|
 | `header` | — | 現行bridgeでは指令変換に使用しない |
+| `vessel_id` / `controller_id` / `lease_id` | — | 取得済みauthority identity |
+| `sequence` | — | 同じlease内で単調増加する番号 |
 | `id` | — | 対象Engine ID |
 | `enabled` | — | Engineの起動状態 |
 | `target_thrust` | N | 目標推力 |
 | `timeout_sec` | s | override時間。0ならbridge既定値 |
 
 ```bash
-ros2 topic pub -r 5 /ksp_vessel/actuators/propulsion/command \
+ros2 topic pub --once /ksp_vessel/actuators/propulsion/command \
   ksp_ros2_interfaces/msg/EngineCommand \
-  "{id: engine_12345_0, enabled: true, target_thrust: 50.0, timeout_sec: 0.5}"
+  "{vessel_id: <vessel-id>, controller_id: manual, lease_id: <lease-id>, sequence: 2, id: engine_12345_0, enabled: true, target_thrust: 50.0, timeout_sec: 0.5}"
 ```
 
 | EngineState field | 単位 | 内容 |
@@ -138,15 +142,17 @@ RCS IDは`rcs_<persistentId>_<moduleIndex>`です。QoSはEngineと同じです�
 | RcsCommand field | 単位 | 内容 |
 |---|---|---|
 | `header` | — | 現行bridgeでは指令変換に使用しない |
+| `vessel_id` / `controller_id` / `lease_id` | — | 取得済みauthority identity |
+| `sequence` | — | 同じlease内で単調増加する番号 |
 | `id` | — | 対象RCS ID |
 | `enabled` | — | RCS moduleの有効状態 |
 | `thrust_limit` | N | moduleの推力上限 |
 | `timeout_sec` | s | override時間。0ならbridge既定値 |
 
 ```bash
-ros2 topic pub -r 5 /ksp_vessel/actuators/rcs/command \
+ros2 topic pub --once /ksp_vessel/actuators/rcs/command \
   ksp_ros2_interfaces/msg/RcsCommand \
-  "{id: rcs_12345_1, enabled: true, thrust_limit: 2.0, timeout_sec: 0.5}"
+  "{vessel_id: <vessel-id>, controller_id: manual, lease_id: <lease-id>, sequence: 2, id: rcs_12345_1, enabled: true, thrust_limit: 2.0, timeout_sec: 0.5}"
 ```
 
 | RcsState field | 単位 | 内容 |
@@ -158,7 +164,7 @@ ros2 topic pub -r 5 /ksp_vessel/actuators/rcs/command \
 | `thrust` / `max_thrust` / `thrust_limit` | N | 現在推力、最大推力、現在上限 |
 | `command_active` | — | 型付きoverride保持中か |
 
-型付きcommandは対象moduleについてBody Wrench配分より優先されます。timeoutまたはactive vessel切替時はoverrideを解除し、元のEngine independent throttleまたはRCS設定へ戻します。有効なtimeout範囲はKSP側で0.05〜10秒です。
+例のidentityは、先に[機体制御API](/api/vehicle-control)で取得したleaseへ置き換えてください。型付きcommandはownerだけが使用でき、対象moduleについてBody Wrench配分より優先されます。timeoutまたはactive vessel切替時はoverrideを解除し、元のEngine independent throttleまたはRCS設定へ戻します。
 
 ## 実装確認先
 

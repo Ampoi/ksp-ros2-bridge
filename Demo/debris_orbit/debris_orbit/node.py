@@ -16,7 +16,7 @@ import rclpy
 from rclpy.duration import Duration
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 from rclpy.time import Time
 from sensor_msgs.msg import Image, PointCloud2, PointField
 from std_msgs.msg import String
@@ -26,7 +26,7 @@ from .core import (
     Vector3,
     add,
     bounding_box_center,
-    body_orientation_for_sensor_look_at,
+    body_orientation_for_sensor_direction,
     detumble_required,
     dot,
     euclidean_clusters,
@@ -94,12 +94,12 @@ class DebrisOrbitNode(Node):
         super().__init__("debris_orbit")
         self._declare_parameters()
 
-        self.platform_id = self._string("platform_id")
+        self.demo_instance_id = self._string("demo_instance_id")
         prefix = self._string("vessel_topic_prefix").rstrip("/")
         lidar_id = self._string("lidar_sensor_id").strip("/")
         camera_id = self._string("camera_sensor_id").strip("/")
         default_topics = vessel_topics(
-            prefix, lidar_id, camera_id, self.platform_id
+            prefix, lidar_id, camera_id, self.demo_instance_id
         )
         lidar_topic = self._string("lidar_topic") or default_topics.lidar_points
         camera_topic = self._string("camera_topic") or default_topics.camera_image
@@ -194,6 +194,7 @@ class DebrisOrbitNode(Node):
         self.last_target_stamp: Optional[Time] = None
         self.last_target_received: Optional[Time] = None
         self.lidar_mount_rotation = (0.0, 0.0, 0.0, 1.0)
+        self.lidar_mount_known = False
         self.search_started: Optional[Time] = None
         self.search_reference_direction: Optional[Vector3] = None
         self.detumbling = False
@@ -209,7 +210,10 @@ class DebrisOrbitNode(Node):
         self.last_status = ""
 
         self.setpoint_publisher = self.create_publisher(ControlSetpoint, setpoint_topic, 10)
-        self.status_publisher = self.create_publisher(String, status_topic, 10)
+        status_qos = QoSProfile(depth=1)
+        status_qos.reliability = ReliabilityPolicy.RELIABLE
+        status_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
+        self.status_publisher = self.create_publisher(String, status_topic, status_qos)
         self.create_subscription(
             PointCloud2, lidar_topic, self.receive_cloud, qos_profile_sensor_data
         )
@@ -225,7 +229,7 @@ class DebrisOrbitNode(Node):
         transform_retry_rate = self._positive("transform_retry_rate_hz")
         self.create_timer(1.0 / transform_retry_rate, self.process_cloud_queue)
         self.get_logger().info(
-            f"platform={self.platform_id} lidar={lidar_topic} "
+            f"demo_instance={self.demo_instance_id} lidar={lidar_topic} "
             f"camera={camera_topic} setpoint={setpoint_topic} "
             f"status={status_topic} enabled={self.enabled}"
         )
@@ -234,7 +238,7 @@ class DebrisOrbitNode(Node):
     def _declare_parameters(self) -> None:
         parameters = {
             "enabled": False,
-            "platform_id": "demo_vehicle",
+            "demo_instance_id": "demo_vehicle",
             "lidar_sensor_id": "front_lidar",
             "camera_sensor_id": "orbit_camera",
             "vessel_topic_prefix": "/ksp_vessel",
@@ -250,8 +254,8 @@ class DebrisOrbitNode(Node):
             "angular_speed_deg_s": 3.0,
             "orbit_direction": 1,
             "orbit_plane_normal": [0.0, 0.0, 1.0],
-            "detumble_enter_rate_deg_s": 10.0,
-            "detumble_exit_rate_deg_s": 3.0,
+            "detumble_enter_rate_deg_s": 6.0,
+            "detumble_exit_rate_deg_s": 2.0,
             "search_start_delay_sec": 0.3,
             "search_yaw_amplitude_deg": 8.0,
             "search_pitch_amplitude_deg": 4.0,
@@ -339,11 +343,10 @@ class DebrisOrbitNode(Node):
         now = self.get_clock().now()
         stamp = Time.from_msg(message.header.stamp)
         pose_ready = self._state_reaches_stamp(stamp)
-        # The LiDAR-to-body chain is an extrinsic/model transform. Its dynamic
-        # publication rate is intentionally lower than the point-cloud rate,
-        # so requiring every edge to bracket the exact cloud timestamp can
-        # fail even though the complete current chain is available. The world
-        # motion is still evaluated at `stamp` using Ground Truth below.
+        # The LiDAR-to-body chain is a /tf_static extrinsic/model transform.
+        # Use the latest value so a model refresh cannot make an otherwise
+        # valid point cloud wait for a timestamped dynamic edge. World motion
+        # is evaluated at `stamp` from Ground Truth below.
         transform_time = Time()
         transform_ready = bool(message.header.frame_id) and self.tf_buffer.can_transform(
             self.body_frame,
@@ -390,6 +393,7 @@ class DebrisOrbitNode(Node):
         # base_link <- sensor: preserve the real LiDAR mounting orientation so
         # guidance aims the sensor axis rather than assuming body +X.
         self.lidar_mount_rotation = transform_rotation
+        self.lidar_mount_known = True
         points = [
             point
             for point in point_cloud_xyz(message)
@@ -469,7 +473,7 @@ class DebrisOrbitNode(Node):
                 message.width, message.height, message.encoding, message.step, bytes(message.data)
             )
             self.output_directory.mkdir(parents=True, exist_ok=True)
-            platform_name = safe_filename_component(self.platform_id, "vehicle")
+            platform_name = safe_filename_component(self.demo_instance_id, "vehicle")
             filename = (
                 f"{platform_name}_detected_debris_"
                 f"{int(round(math.degrees(angle))) % 360:03d}deg_{capture_index:02d}.png"
@@ -565,8 +569,8 @@ class DebrisOrbitNode(Node):
         velocity = self._twist_linear()
         position_error = subtract(desired_position, position)
         current_q = self._pose_quaternion()
-        desired_q = body_orientation_for_sensor_look_at(
-            subtract(target, position), self.plane_normal, self.lidar_mount_rotation
+        desired_q = body_orientation_for_sensor_direction(
+            current_q, self.lidar_mount_rotation, subtract(target, position)
         )
         attitude_error = quaternion_error_vector(desired_q, current_q)
         self._publish_setpoint(
@@ -575,7 +579,12 @@ class DebrisOrbitNode(Node):
             desired_position,
             desired_q,
             desired_velocity,
-            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 0.0)
+            if self.orbit_started is None
+            else scale(
+                self.plane_normal,
+                self.angular_speed * self.orbit_direction,
+            ),
         )
         if self.orbit_started is None:
             if (
@@ -594,8 +603,8 @@ class DebrisOrbitNode(Node):
 
     def _publish_target_attitude_setpoint(self, now: Time, target: Vector3) -> None:
         direction = subtract(target, self._pose_position())
-        desired_q = body_orientation_for_sensor_look_at(
-            direction, self.plane_normal, self.lidar_mount_rotation
+        desired_q = body_orientation_for_sensor_direction(
+            self._pose_quaternion(), self.lidar_mount_rotation, direction
         )
         self._publish_setpoint(
             now,
@@ -607,6 +616,17 @@ class DebrisOrbitNode(Node):
         )
 
     def _publish_search_setpoint(self, now: Time) -> None:
+        if not self.lidar_mount_known:
+            self._publish_setpoint(
+                now,
+                ControlSetpoint.MODE_ATTITUDE_HOLD,
+                self._pose_position(),
+                self._pose_quaternion(),
+                (0.0, 0.0, 0.0),
+                (0.0, 0.0, 0.0),
+            )
+            self._publish_status("waiting_for_lidar_transform")
+            return
         if self.search_started is None:
             self.search_started = now
         elapsed = max(0.0, (now - self.search_started).nanoseconds * 1.0e-9)
@@ -629,8 +649,8 @@ class DebrisOrbitNode(Node):
             0.0 if elapsed < self.search_start_delay else self.search_yaw_amplitude,
             0.0 if elapsed < self.search_start_delay else self.search_pitch_amplitude,
         )
-        desired_q = body_orientation_for_sensor_look_at(
-            direction, self.plane_normal, self.lidar_mount_rotation
+        desired_q = body_orientation_for_sensor_direction(
+            self._pose_quaternion(), self.lidar_mount_rotation, direction
         )
         self._publish_setpoint(
             now,
@@ -815,7 +835,7 @@ class DebrisOrbitNode(Node):
     def _publish_status(self, state: str, **extra: object) -> None:
         payload = {
             "state": state,
-            "platform_id": self.platform_id,
+            "demo_instance_id": self.demo_instance_id,
             "captures": self.saved_captures,
             "capture_count": self.capture_count,
         }

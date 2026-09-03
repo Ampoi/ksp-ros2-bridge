@@ -15,7 +15,7 @@ KerbalLiDARは、KSP 1.xのFlightシーンとROS2ノードの間を2本のUDP経
 | 方向 | 内容 | 既定経路 |
 |---|---|---|
 | KSP → bridge | センサー、モーター/アクチュエータ状態、推進系、Ground Truth、URDF | UDP `127.0.0.1:49010` |
-| bridge → KSP | モーター、推進系、Body Wrench、型付きアクチュエータ指令 | UDP `127.0.0.1:49011` |
+| bridge → KSP | authority、lease-bound Wrench、型付きアクチュエータ指令 | UDP `127.0.0.1:49011` |
 | bridge → ROS2 | センサー、状態、診断、Ground Truth、URDF、TF | ROS2 Topic |
 | ROS2 → bridge | モーター、推進系、機体・アクチュエータ指令 | ROS2 Topic |
 
@@ -31,7 +31,7 @@ KerbalLiDARは、KSP 1.xのFlightシーンとROS2ノードの間を2本のUDP経
 | KSP標準Engine / RCS | `String` / `Float64` / `Twist` | 推進・6軸入力 |
 | KSP標準Wheel / Engine / RCS | `ksp_ros2_interfaces` | パーツ単位の型付き制御・状態 |
 | KSP標準ドッキングポート | `DockingPortCommand/State` + `Image` | 状態、切離し、選択式ポートカメラ |
-| active vessel | `WrenchStamped` / `PoseStamped` | 機体要求とGround Truth |
+| active vessel | `BodyWrenchCommand` / `WrenchFeedback` / `PoseStamped` | 所有権付き機体要求・実現量・Ground Truth |
 
 標準Engine / RCSは専用パーツではありません。active vessel内の`ModuleEngines`系と`ModuleRCS`系をFlight開始後に自動検出します。
 
@@ -48,4 +48,4 @@ KerbalLiDARは、KSP 1.xのFlightシーンとROS2ノードの間を2本のUDP経
 
 センサーTopicの`<part_name>`は、VAB/SPHのパーツ右クリックメニューから設定します。英数字とアンダースコアへ正規化され、同一機体内の重複には`_2`、`_3`のような接尾辞が付きます。
 
-LiDARはROSセンサー座標の`+X`前方・`+Z`上方です。カメラはREP-103 optical座標の`+X`右・`+Y`下・`+Z`前方です。active vesselモデルを受信できた場合、各メッセージの`frame_id`は対応する機体linkの子frameへ接続されます。
+LiDARはROSセンサー座標の`+X`前方・`+Z`上方です。カメラはREP-103 optical座標の`+X`右・`+Y`下・`+Z`前方です。active vesselモデルを受信できた場合、各メッセージの`frame_id`はSensor ID由来の安定名になり、対応する機体linkへ`/tf_static`で接続されます。

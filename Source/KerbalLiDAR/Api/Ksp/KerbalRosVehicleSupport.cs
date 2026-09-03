@@ -4,6 +4,8 @@ using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using KerbalLiDAR.Application.Control;
+using KerbalLiDAR.Domain.Control;
 using ModuleWheels;
 using UnityEngine;
 
@@ -15,6 +17,9 @@ namespace KerbalLiDAR
         public string type;
         public int version;
         public string frame;
+        public string vesselId;
+        public string controllerId;
+        public string leaseId;
         public double[] force;
         public double[] torque;
         public double timeoutSeconds;
@@ -28,6 +33,9 @@ namespace KerbalLiDAR
         public int version;
         public string actuatorType;
         public string name;
+        public string vesselId;
+        public string controllerId;
+        public string leaseId;
         public bool enabled;
         public double timeoutSeconds;
         public long sequence;
@@ -37,6 +45,21 @@ namespace KerbalLiDAR
         public double targetThrust;
         public double thrustLimit;
         public bool separate;
+    }
+
+    [Serializable]
+    public sealed class KerbalRosControlAuthorityCommand
+    {
+        public string type;
+        public int version;
+        public string action;
+        public string vesselId;
+        public string controllerId;
+        public string leaseId;
+        public int priority;
+        public double leaseDurationSeconds;
+        public bool suppressSas;
+        public long sequence;
     }
 
     internal static class KerbalRosActuatorNames
@@ -75,6 +98,7 @@ namespace KerbalLiDAR
     public sealed class KerbalRosVehicleManager : MonoBehaviour
     {
         private const int ProtocolVersion = 1;
+        private const int ControlProtocolVersion = 2;
         private const int CommandPort = 49011;
         private const int StatePort = 49010;
         private const float StateRateHz = 30f;
@@ -130,6 +154,31 @@ namespace KerbalLiDAR
         }
 
         private static KerbalRosVehicleManager instance;
+
+        internal static bool ExclusiveControlActive
+        {
+            get
+            {
+                return instance != null && instance.control != null &&
+                    instance.control.Authority.Mode != ControlAuthorityMode.Unowned;
+            }
+        }
+
+        internal static bool TryAcceptExclusiveCommand(
+            string vesselId,
+            string controllerId,
+            string leaseId,
+            long sequence,
+            out string reason)
+        {
+            if (instance == null || instance.control == null || !instance.TargetsActiveVessel(vesselId))
+            {
+                reason = "active_vessel_mismatch";
+                return false;
+            }
+            return instance.control.Authority.AcceptCommand(
+                controllerId, leaseId, Time.realtimeSinceStartup, sequence, out reason);
+        }
         private readonly Dictionary<string, WheelOverride> wheelOverrides = new Dictionary<string, WheelOverride>();
         private readonly Dictionary<string, EngineOverride> engineOverrides = new Dictionary<string, EngineOverride>();
         private readonly Dictionary<string, RcsOverride> rcsOverrides = new Dictionary<string, RcsOverride>();
@@ -154,15 +203,31 @@ namespace KerbalLiDAR
         private int originSequence;
         private float nextStateTime;
         private float nextManifestTime;
+        private float nextAuthorityStateTime;
         private bool wrenchActive;
         private Vector3 requestedForce;
         private Vector3 requestedTorque;
         private float wrenchExpiresAt;
+        private long activeWrenchSequence;
+        private string activeWrenchControllerId = string.Empty;
+        private string activeWrenchLeaseId = string.Empty;
+        private WrenchValue rawRequestedWrench;
+        private WrenchValue requestedWrench;
+        private WrenchValue allocatedWrench;
+        private bool wrenchFeedbackPending;
+        private string wrenchReason = "idle";
+        private bool rcsActionGroupOverridden;
+        private bool rcsActionGroupWasEnabled;
+        private bool sasOverrideActive;
+        private bool sasWasEnabled;
+        private VehicleControlApplication control;
         private float lastWarningTime = -1000f;
 
         public void Start()
         {
             instance = this;
+            control = new VehicleControlApplication(LoadSafetyPolicy());
+            control.ResetSafety(Time.realtimeSinceStartup);
             stateClient = new UdpClient();
             stateEndpoint = new IPEndPoint(IPAddress.Loopback, StatePort);
             AttachToActiveVessel();
@@ -172,7 +237,26 @@ namespace KerbalLiDAR
         {
             AttachToActiveVessel();
             ExpireCommands();
+            if (wrenchFeedbackPending)
+            {
+                wrenchFeedbackPending = false;
+                SendWrenchStatus(allocatedWrench, MeasurePropulsionWrench(), wrenchReason);
+            }
+            if (control != null &&
+                (control.Authority.Mode == ControlAuthorityMode.EmergencyStop ||
+                 (control.Authority.Mode == ControlAuthorityMode.Owned &&
+                  control.Authority.SuppressSas)))
+            {
+                // Ownership is a mode, not a one-shot toggle. Keep SAS
+                // suppressed if the player or another mod tries to re-enable it.
+                AcquireSasOverride();
+            }
             ApplyDirectWheelCommands();
+            if (Time.realtimeSinceStartup >= nextAuthorityStateTime)
+            {
+                SendControlAuthorityState(control == null ? "initializing" : control.Authority.Reason);
+                nextAuthorityStateTime = Time.realtimeSinceStartup + 0.1f;
+            }
             if (vessel == null || Time.realtimeSinceStartup < nextStateTime)
             {
                 return;
@@ -217,23 +301,33 @@ namespace KerbalLiDAR
                 return false;
             }
             if (envelope == null ||
-                (envelope.type != "ksp_body_wrench_command" && envelope.type != "ksp_actuator_command"))
+                (envelope.type != "ksp_body_wrench_command" &&
+                 envelope.type != "ksp_actuator_command" &&
+                 envelope.type != "ksp_control_authority_command"))
             {
                 return false;
             }
-            if (port != CommandPort || envelope.version != ProtocolVersion || instance == null)
+            if (port != CommandPort || instance == null)
             {
                 return true;
             }
             try
             {
-                if (envelope.type == "ksp_body_wrench_command")
+                if (envelope.type == "ksp_control_authority_command" && envelope.version == ControlProtocolVersion)
+                {
+                    instance.ApplyControlAuthority(JsonUtility.FromJson<KerbalRosControlAuthorityCommand>(json));
+                }
+                else if (envelope.type == "ksp_body_wrench_command" && envelope.version == ControlProtocolVersion)
                 {
                     instance.ApplyBodyWrench(JsonUtility.FromJson<KerbalRosBodyWrenchCommand>(json));
                 }
-                else
+                else if (envelope.type == "ksp_actuator_command" && envelope.version == ControlProtocolVersion)
                 {
                     instance.ApplyActuatorCommand(JsonUtility.FromJson<KerbalRosActuatorCommand>(json));
+                }
+                else
+                {
+                    instance.SendRejectedWrench(0, "unsupported_control_protocol");
                 }
             }
             catch (Exception exception)
@@ -258,6 +352,11 @@ namespace KerbalLiDAR
             }
             vessel.OnFlyByWire += ApplyFlyByWire;
             ResetGroundTruthOrigin();
+            if (control != null && control.Authority.Mode == ControlAuthorityMode.EmergencyStop)
+            {
+                KerbalRosPropulsionManager.SuspendForExclusiveControl();
+                AcquireSasOverride();
+            }
         }
 
         private void DetachFromVessel()
@@ -269,10 +368,26 @@ namespace KerbalLiDAR
             RestoreBodyEngineStates();
             RestoreDirectRcsStates();
             RestoreDirectWheelStates();
+            RestoreRcsActionGroup();
+            RestoreSasState();
             wheelOverrides.Clear();
             engineOverrides.Clear();
             rcsOverrides.Clear();
             wrenchActive = false;
+            requestedForce = Vector3.zero;
+            requestedTorque = Vector3.zero;
+            requestedWrench = WrenchValue.Zero;
+            rawRequestedWrench = WrenchValue.Zero;
+            allocatedWrench = WrenchValue.Zero;
+            wrenchFeedbackPending = false;
+            activeWrenchSequence = 0;
+            activeWrenchControllerId = string.Empty;
+            activeWrenchLeaseId = string.Empty;
+            if (control != null)
+            {
+                control.Authority.ReleaseForLifecycleChange("active_vessel_changed");
+                control.ResetSafety(Time.realtimeSinceStartup);
+            }
             vessel = null;
             anchorBody = null;
             derivativeReady = false;
@@ -295,14 +410,147 @@ namespace KerbalLiDAR
             nextManifestTime = 0f;
         }
 
-        private void ApplyBodyWrench(KerbalRosBodyWrenchCommand command)
+        private void ApplyControlAuthority(KerbalRosControlAuthorityCommand command)
         {
-            if (command == null || !VectorIsFinite(command.force) || !VectorIsFinite(command.torque))
+            if (command == null || control == null)
             {
                 return;
             }
-            requestedForce = new Vector3((float)command.force[0], (float)command.force[1], (float)command.force[2]);
-            requestedTorque = new Vector3((float)command.torque[0], (float)command.torque[1], (float)command.torque[2]);
+            if (!TargetsActiveVessel(command.vesselId))
+            {
+                SendControlAuthorityState("active_vessel_mismatch");
+                return;
+            }
+
+            var now = Time.realtimeSinceStartup;
+            var action = (command.action ?? string.Empty).Trim().ToLowerInvariant();
+            var previousMode = control.Authority.Mode;
+            var previousControllerId = control.Authority.ControllerId;
+            var previousLeaseId = control.Authority.LeaseId;
+            var accepted = false;
+            string reason;
+            if (action == "acquire")
+            {
+                accepted = control.Authority.Acquire(
+                    command.controllerId, command.leaseId, command.priority, now,
+                    command.leaseDurationSeconds, command.suppressSas,
+                    command.sequence, out reason);
+            }
+            else if (action == "renew")
+            {
+                accepted = control.Authority.Renew(
+                    command.controllerId, command.leaseId, now,
+                    command.leaseDurationSeconds, command.suppressSas,
+                    command.sequence, out reason);
+            }
+            else if (action == "release")
+            {
+                accepted = control.Authority.Release(
+                    command.controllerId, command.leaseId, command.sequence, out reason);
+            }
+            else if (action == "emergency_stop")
+            {
+                accepted = control.Authority.EmergencyStop(
+                    command.controllerId, command.leaseId, command.sequence,
+                    "emergency_stop", out reason);
+            }
+            else if (action == "clear_emergency_stop")
+            {
+                accepted = control.Authority.ClearEmergencyStop(
+                    command.controllerId, command.leaseId, command.sequence, out reason);
+            }
+            else
+            {
+                reason = "unsupported_authority_action";
+            }
+
+            if (accepted && control.Authority.Mode == ControlAuthorityMode.Owned)
+            {
+                var ownerChanged = previousMode != ControlAuthorityMode.Owned ||
+                    previousControllerId != control.Authority.ControllerId ||
+                    previousLeaseId != control.Authority.LeaseId;
+                if (ownerChanged)
+                {
+                    StopAllVehicleControl();
+                }
+                KerbalRosPropulsionManager.SuspendForExclusiveControl();
+                if (control.Authority.SuppressSas)
+                {
+                    AcquireSasOverride();
+                }
+                else
+                {
+                    RestoreSasState();
+                }
+            }
+            else if (accepted && control.Authority.Mode == ControlAuthorityMode.EmergencyStop)
+            {
+                StopAllVehicleControl();
+                KerbalRosPropulsionManager.SuspendForExclusiveControl();
+                AcquireSasOverride();
+            }
+            else if (accepted)
+            {
+                StopAllVehicleControl();
+            }
+            SendControlAuthorityState(reason);
+        }
+
+        private void ApplyBodyWrench(KerbalRosBodyWrenchCommand command)
+        {
+            if (command == null)
+            {
+                SendRejectedWrench(0, "invalid_wrench", WrenchValue.Zero, string.Empty, string.Empty);
+                return;
+            }
+            if (!string.Equals(command.frame, "base_link", StringComparison.Ordinal))
+            {
+                SendRejectedWrench(
+                    command.sequence, "unsupported_wrench_frame", WrenchValue.Zero,
+                    command.controllerId, command.leaseId);
+                return;
+            }
+            if (!VectorIsFinite(command.force) || !VectorIsFinite(command.torque))
+            {
+                SendRejectedWrench(
+                    command.sequence, "invalid_wrench", WrenchValue.Zero,
+                    command.controllerId, command.leaseId);
+                return;
+            }
+            var raw = new WrenchValue(
+                new Vector3Value(command.force[0], command.force[1], command.force[2]),
+                new Vector3Value(command.torque[0], command.torque[1], command.torque[2]));
+            if (!TargetsActiveVessel(command.vesselId))
+            {
+                SendRejectedWrench(
+                    command.sequence, "active_vessel_mismatch", raw,
+                    command.controllerId, command.leaseId);
+                return;
+            }
+            var rejectionReason = "control_unavailable";
+            var filtered = control == null ? null : control.AcceptWrench(
+                command.controllerId,
+                command.leaseId,
+                command.sequence,
+                Time.realtimeSinceStartup,
+                raw,
+                ToDomain(VesselAngularVelocityBody()),
+                out rejectionReason);
+            if (filtered == null)
+            {
+                SendRejectedWrench(
+                    command.sequence, rejectionReason, raw,
+                    command.controllerId, command.leaseId);
+                return;
+            }
+            rawRequestedWrench = raw;
+            requestedWrench = filtered.Wrench;
+            requestedForce = ToUnity(requestedWrench.Force);
+            requestedTorque = ToUnity(requestedWrench.Torque);
+            wrenchReason = filtered.Reason;
+            activeWrenchSequence = command.sequence;
+            activeWrenchControllerId = command.controllerId ?? string.Empty;
+            activeWrenchLeaseId = command.leaseId ?? string.Empty;
             var timeout = IsFinite(command.timeoutSeconds) && command.timeoutSeconds > 0.0
                 ? Mathf.Clamp((float)command.timeoutSeconds, 0.05f, 10f)
                 : DefaultTimeout;
@@ -314,6 +562,18 @@ namespace KerbalLiDAR
         {
             if (command == null || string.IsNullOrEmpty(command.name))
             {
+                return;
+            }
+            if (!TargetsActiveVessel(command.vesselId))
+            {
+                return;
+            }
+            var rejectionReason = "control_unavailable";
+            if (control == null || !control.Authority.AcceptCommand(
+                command.controllerId, command.leaseId, Time.realtimeSinceStartup,
+                command.sequence, out rejectionReason))
+            {
+                SendControlAuthorityState(rejectionReason);
                 return;
             }
             var name = KerbalRosMotorNames.Sanitize(command.name, "actuator");
@@ -397,16 +657,56 @@ namespace KerbalLiDAR
         private void ExpireCommands()
         {
             var now = Time.realtimeSinceStartup;
+            if (control != null && control.Authority.Expire(now))
+            {
+                StopAllVehicleControl();
+                SendControlAuthorityState("lease_expired");
+            }
             if (wrenchActive && now > wrenchExpiresAt)
             {
                 wrenchActive = false;
                 requestedForce = Vector3.zero;
                 requestedTorque = Vector3.zero;
+                requestedWrench = WrenchValue.Zero;
+                rawRequestedWrench = WrenchValue.Zero;
+                allocatedWrench = WrenchValue.Zero;
+                wrenchFeedbackPending = false;
+                wrenchReason = "command_timeout";
                 RestoreBodyEngineStates();
+                RestoreRcsActionGroup();
+                SendWrenchStatus(WrenchValue.Zero, MeasurePropulsionWrench(), "command_timeout");
             }
             ExpireWheelOverrides(now);
             ExpireEngineOverrides(now);
             ExpireRcsOverrides(now);
+        }
+
+        private void AcquireSasOverride()
+        {
+            if (vessel == null)
+            {
+                return;
+            }
+            if (!sasOverrideActive)
+            {
+                sasWasEnabled = vessel.ActionGroups[KSPActionGroup.SAS];
+                sasOverrideActive = true;
+            }
+            vessel.ActionGroups.SetGroup(KSPActionGroup.SAS, false);
+        }
+
+        private void RestoreSasState()
+        {
+            if (!sasOverrideActive)
+            {
+                return;
+            }
+            if (vessel != null)
+            {
+                vessel.ActionGroups.SetGroup(KSPActionGroup.SAS, sasWasEnabled);
+            }
+            sasOverrideActive = false;
+            sasWasEnabled = false;
         }
 
         private static void RemoveExpired<T>(Dictionary<string, T> values, float now, Func<T, float> expiry)
@@ -508,6 +808,14 @@ namespace KerbalLiDAR
             {
                 return;
             }
+            if (control != null && control.Authority.Mode != ControlAuthorityMode.Unowned)
+            {
+                ClearFlightControlState(state);
+            }
+            if (control != null && control.Authority.Mode == ControlAuthorityMode.EmergencyStop)
+            {
+                return;
+            }
             ApplyDirectEngineAndRcsCommands();
             if (!wrenchActive)
             {
@@ -519,7 +827,11 @@ namespace KerbalLiDAR
             AllocateWheels(state, ref residualForce, ref residualTorque);
             AllocateEngines(ref residualForce, ref residualTorque);
             AllocateRcs(state, ref residualForce, ref residualTorque);
-            SendWrenchStatus(residualForce, residualTorque);
+            allocatedWrench = requestedWrench - new WrenchValue(
+                ToDomain(residualForce), ToDomain(residualTorque));
+            // FlightCtrlState is consumed by ModuleRCS later in the physics
+            // tick. Measure and publish from Update after KSP has applied it.
+            wrenchFeedbackPending = true;
         }
 
         private void AllocateWheels(FlightCtrlState state, ref Vector3 force, ref Vector3 torque)
@@ -542,7 +854,9 @@ namespace KerbalLiDAR
                 }
                 var radius = Mathf.Max(0.01f, wheelBase.Wheel.WheelRadius);
                 maximumForce += Mathf.Max(0f, motor.maxTorque) / radius;
-                steeringLever += Mathf.Abs(Vector3.Dot(wheelBase.part.transform.position - vessel.CoM, BodyForwardWorld()));
+                steeringLever += Mathf.Abs(Vector3.Dot(
+                    wheelBase.part.transform.position - vessel.CurrentCoM,
+                    BodyForwardWorld()));
                 count++;
             }
             if (maximumForce <= 0.001f || count == 0)
@@ -583,52 +897,147 @@ namespace KerbalLiDAR
 
         private void AllocateRcs(FlightCtrlState state, ref Vector3 force, ref Vector3 torque)
         {
-            var maxForce = 0f;
-            var maxTorque = 0f;
-            var enabled = false;
+            var positive = new WrenchValue[6];
+            var negative = new WrenchValue[6];
+            var hasNozzles = false;
+            for (var axis = 0; axis < 6; axis++)
+            {
+                positive[axis] = EvaluateRcsControl(UnitRcsControl(axis, 1f), ref hasNozzles);
+                negative[axis] = EvaluateRcsControl(UnitRcsControl(axis, -1f), ref hasNozzles);
+            }
+            if (!hasNozzles)
+            {
+                return;
+            }
+
+            AcquireRcsActionGroupOverride();
+            var desired = new WrenchValue(ToDomain(force), ToDomain(torque));
+            var allocation = RcsControlAllocator.Solve(desired, positive, negative);
+            state.X = (float)allocation.Control.X;
+            state.Y = (float)allocation.Control.Y;
+            state.Z = (float)allocation.Control.Z;
+            state.pitch = (float)allocation.Control.Pitch;
+            state.yaw = (float)allocation.Control.Yaw;
+            state.roll = (float)allocation.Control.Roll;
+
+            // Re-evaluate the combined command through KSP's actual per-nozzle
+            // mixer. This captures mixed translation/rotation clamping that a
+            // linear channel solve cannot represent.
+            var combined = EvaluateRcsControl(allocation.Control, ref hasNozzles);
+            force -= ToUnity(combined.Force);
+            torque -= ToUnity(combined.Torque);
+        }
+
+        private WrenchValue EvaluateRcsControl(RcsControlInput controlInput, ref bool hasNozzles)
+        {
+            if (vessel == null || vessel.ReferenceTransform == null)
+            {
+                return WrenchValue.Zero;
+            }
+            var forceBody = Vector3Value.Zero;
+            var torqueBody = Vector3Value.Zero;
+            var referenceRotation = vessel.ReferenceTransform.rotation;
+            var precisionMode = FlightInputHandler.fetch != null &&
+                FlightInputHandler.fetch.precisionMode;
             foreach (var rcs in RcsModules())
             {
                 var name = KerbalRosActuatorNames.For("rcs", rcs.part,
                     KerbalRosActuatorNames.ModuleIndex(rcs.part, rcs));
-                RcsOverride direct;
-                if (rcsOverrides.TryGetValue(name, out direct))
-                {
-                    rcs.rcsEnabled = direct.Enabled;
-                    rcs.thrustPercentage = rcs.thrusterPower > 0.001f
-                        ? Mathf.Clamp01(direct.ThrustLimit / rcs.thrusterPower) * 100f
-                        : 0f;
-                }
-                if (!rcs.rcsEnabled || rcs.flameout)
+                if (rcsOverrides.ContainsKey(name) || !rcs.rcsEnabled || rcs.flameout ||
+                    rcs.thrusterTransforms == null)
                 {
                     continue;
                 }
-                enabled = true;
-                var nozzleCount = rcs.thrusterTransforms == null ? 1 : Math.Max(1, rcs.thrusterTransforms.Count);
-                maxForce += rcs.thrusterPower * nozzleCount * Mathf.Clamp01(rcs.thrustPercentage / 100f);
-                maxTorque += rcs.thrusterPower * nozzleCount *
-                    Mathf.Max(0.5f, Vector3.Distance(rcs.part.transform.position, vessel.CoM));
+                var maximum = rcs.thrusterPower * Mathf.Clamp01(rcs.thrustPercentage / 100f);
+                if (maximum <= 0.001f)
+                {
+                    continue;
+                }
+                var linearInput = referenceRotation * new Vector3(
+                    rcs.enableX ? (float)controlInput.X : 0f,
+                    rcs.enableZ ? (float)controlInput.Z : 0f,
+                    rcs.enableY ? (float)controlInput.Y : 0f);
+                // Match ModuleRCS.Update exactly. KSP converts this local
+                // (pitch, roll, yaw) vector through ReferenceTransform before
+                // evaluating every nozzle and its moment arm.
+                var rotationInput = referenceRotation * new Vector3(
+                    rcs.enablePitch ? (float)controlInput.Pitch : 0f,
+                    rcs.enableRoll ? (float)controlInput.Roll : 0f,
+                    rcs.enableYaw ? (float)controlInput.Yaw : 0f);
+
+                for (var index = 0; index < rcs.thrusterTransforms.Count; index++)
+                {
+                    var nozzle = rcs.thrusterTransforms[index];
+                    if (nozzle == null || !nozzle.gameObject.activeInHierarchy)
+                    {
+                        continue;
+                    }
+                    hasNozzles = true;
+                    var axis = (rcs.useZaxis ? nozzle.forward : nozzle.up).normalized;
+                    var offsetWorld = nozzle.position - vessel.CurrentCoM;
+                    var rotationDirection = Vector3.zero;
+                    if (rotationInput.sqrMagnitude > 1.0e-10f)
+                    {
+                        var lever = Vector3.ProjectOnPlane(offsetWorld, rotationInput);
+                        if (lever.sqrMagnitude > 1.0e-10f)
+                        {
+                            rotationDirection = Vector3.Cross(rotationInput, lever.normalized);
+                        }
+                    }
+                    var fraction = Mathf.Max(Vector3.Dot(axis, rotationDirection), 0f) +
+                        Mathf.Max(Vector3.Dot(axis, linearInput), 0f);
+                    fraction = Mathf.Clamp01(fraction);
+                    if (rcs.fullThrust && fraction >= rcs.fullThrustMin)
+                    {
+                        fraction = 1f;
+                    }
+                    if (precisionMode)
+                    {
+                        if (rcs.useLever)
+                        {
+                            // Matches ModuleRCS.GetLeverDistance: perpendicular
+                            // distance from CurrentCoM to the nozzle thrust line.
+                            var distance = offsetWorld.magnitude;
+                            if (distance > 1.0e-6f)
+                            {
+                                var cosine = Mathf.Clamp(Vector3.Dot(
+                                    -offsetWorld / distance, -axis), -1f, 1f);
+                                var leverDistance = distance * Mathf.Sqrt(
+                                    Mathf.Max(0f, 1f - cosine * cosine));
+                                if (leverDistance > 1f)
+                                {
+                                    fraction /= leverDistance;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            fraction *= rcs.precisionFactor;
+                        }
+                    }
+                    if (fraction <= 1.0e-6f)
+                    {
+                        continue;
+                    }
+                    var forceWorld = -axis * (maximum * fraction);
+                    var torqueWorld = Vector3.Cross(offsetWorld, forceWorld);
+                    forceBody += ToDomain(WorldVectorToBody(forceWorld));
+                    torqueBody += ToDomain(WorldVectorToBody(torqueWorld));
+                }
             }
-            if (!enabled)
-            {
-                return;
-            }
-            vessel.ActionGroups.SetGroup(KSPActionGroup.RCS, true);
-            maxForce = Mathf.Max(0.001f, maxForce);
-            maxTorque = Mathf.Max(0.001f, maxTorque);
-            var x = Mathf.Clamp(force.x / maxForce, -1f, 1f);
-            var y = Mathf.Clamp(force.y / maxForce, -1f, 1f);
-            var z = Mathf.Clamp(force.z / maxForce, -1f, 1f);
-            var roll = Mathf.Clamp(torque.x / maxTorque, -1f, 1f);
-            var pitch = Mathf.Clamp(torque.y / maxTorque, -1f, 1f);
-            var yaw = Mathf.Clamp(torque.z / maxTorque, -1f, 1f);
-            state.Z = x;
-            state.X = -y;
-            state.Y = z;
-            state.roll = roll;
-            state.pitch = pitch;
-            state.yaw = yaw;
-            force -= new Vector3(x, y, z) * maxForce;
-            torque -= new Vector3(roll, pitch, yaw) * maxTorque;
+            return new WrenchValue(forceBody, torqueBody);
+        }
+
+        private static RcsControlInput UnitRcsControl(int axis, float value)
+        {
+            var input = new RcsControlInput();
+            if (axis == 0) input.X = value;
+            else if (axis == 1) input.Y = value;
+            else if (axis == 2) input.Z = value;
+            else if (axis == 3) input.Pitch = value;
+            else if (axis == 4) input.Yaw = value;
+            else if (axis == 5) input.Roll = value;
+            return input;
         }
 
         private List<float> SolveBounded(List<EngineChannel> channels, Vector3 force, Vector3 torque)
@@ -694,13 +1103,14 @@ namespace KerbalLiDAR
                     center = engine.part.transform.position;
                 }
                 direction.Normalize();
-                var force = WorldVectorToBody(direction) * maxThrust;
-                var offset = WorldVectorToBody(center - vessel.CoM);
+                var worldForce = direction * maxThrust;
+                var worldOffset = center - vessel.CurrentCoM;
+                var force = WorldVectorToBody(worldForce);
                 channels.Add(new EngineChannel
                 {
                     Engine = engine,
                     Force = force,
-                    Torque = Vector3.Cross(offset, force),
+                    Torque = WorldVectorToBody(Vector3.Cross(worldOffset, worldForce)),
                     MaximumThrust = maxThrust
                 });
             }
@@ -841,7 +1251,14 @@ namespace KerbalLiDAR
             var position = ProjectToAnchor(delta);
 
             var linearVelocity = WorldVectorToAnchor(vessel.srf_velocity, currentEast, currentNorth, currentUp);
-            var angularVelocity = WorldVectorToAnchor(vessel.angularVelocity, currentEast, currentNorth, currentUp);
+            var angularVelocity = WorldVectorToAnchor(
+                VesselAngularVelocityWorld(), currentEast, currentNorth, currentUp);
+            // Publish these directly from KSP's vessel basis.  Reconstructing
+            // body velocity from the ROS orientation is unsafe because Unity's
+            // transform basis and ROS's right-handed frame do not share the
+            // same handedness.
+            var linearVelocityBody = WorldVectorToBody(vessel.srf_velocity);
+            var angularVelocityBody = VesselAngularVelocityBody();
             var now = Planetarium.GetUniversalTime();
             var elapsed = Math.Max(0.0001, now - previousTruthTime);
             var linearAcceleration = derivativeReady
@@ -872,6 +1289,8 @@ namespace KerbalLiDAR
             AppendQuaternion(builder, "rotation", rotation);
             AppendVector(builder, "linearVelocity", linearVelocity);
             AppendVector(builder, "angularVelocity", angularVelocity);
+            AppendVector(builder, "linearVelocityBody", linearVelocityBody);
+            AppendVector(builder, "angularVelocityBody", angularVelocityBody);
             AppendVector(builder, "linearAcceleration", linearAcceleration);
             AppendVector(builder, "angularAcceleration", angularAcceleration);
             builder.Append('}');
@@ -1061,18 +1480,283 @@ namespace KerbalLiDAR
                 : fairing.Events["DeployFairing"];
         }
 
-        private void SendWrenchStatus(Vector3 residualForce, Vector3 residualTorque)
+        private void SendRejectedWrench(long sequence, string reason)
         {
-            var builder = new StringBuilder(384);
+            SendRejectedWrench(sequence, reason, WrenchValue.Zero, string.Empty, string.Empty);
+        }
+
+        private void SendRejectedWrench(
+            long sequence,
+            string reason,
+            WrenchValue requested,
+            string controllerId,
+            string leaseId)
+        {
+            var previousSequence = activeWrenchSequence;
+            var previousControllerId = activeWrenchControllerId;
+            var previousLeaseId = activeWrenchLeaseId;
+            var previousRequested = rawRequestedWrench;
+            activeWrenchSequence = sequence;
+            activeWrenchControllerId = controllerId ?? string.Empty;
+            activeWrenchLeaseId = leaseId ?? string.Empty;
+            rawRequestedWrench = requested;
+            SendWrenchStatus(WrenchValue.Zero, MeasurePropulsionWrench(), reason, false);
+            activeWrenchSequence = previousSequence;
+            activeWrenchControllerId = previousControllerId;
+            activeWrenchLeaseId = previousLeaseId;
+            rawRequestedWrench = previousRequested;
+        }
+
+        private void SendWrenchStatus(
+            WrenchValue allocated,
+            WrenchValue achieved,
+            string reason,
+            bool accepted = true)
+        {
+            var allocationResidual = rawRequestedWrench - allocated;
+            var trackingResidual = rawRequestedWrench - achieved;
+            var forceScale = Math.Max(1.0, rawRequestedWrench.Force.Magnitude);
+            var torqueScale = Math.Max(1.0, rawRequestedWrench.Torque.Magnitude);
+            var requestedNorm = rawRequestedWrench.WeightedNorm(forceScale, torqueScale);
+            var saturationRatio = allocationResidual.WeightedNorm(forceScale, torqueScale) /
+                Math.Max(requestedNorm, 1.0e-9);
+            var trackingRatio = trackingResidual.WeightedNorm(forceScale, torqueScale) /
+                Math.Max(requestedNorm, 1.0e-9);
+
+            var builder = new StringBuilder(1024);
             builder.Append('{');
             AppendString(builder, "type", "ksp_wrench_status", true);
-            AppendNumber(builder, "version", ProtocolVersion);
-            AppendVector(builder, "requestedForce", requestedForce);
-            AppendVector(builder, "requestedTorque", requestedTorque);
-            AppendVector(builder, "residualForce", residualForce);
-            AppendVector(builder, "residualTorque", residualTorque);
+            AppendNumber(builder, "version", ControlProtocolVersion);
+            AppendString(builder, "vesselId", ActiveVesselId());
+            AppendString(builder, "controllerId", activeWrenchControllerId);
+            AppendString(builder, "leaseId", activeWrenchLeaseId);
+            AppendNumber(builder, "sequence", activeWrenchSequence);
+            AppendBoolean(builder, "accepted", accepted);
+            AppendString(builder, "reason", reason ?? string.Empty);
+            AppendWrench(builder, "requested", rawRequestedWrench);
+            AppendWrench(builder, "allocated", allocated);
+            AppendWrench(builder, "achieved", achieved);
+            AppendWrench(builder, "allocationResidual", allocationResidual);
+            AppendWrench(builder, "trackingResidual", trackingResidual);
+            AppendNumber(builder, "saturationRatio", saturationRatio);
+            AppendNumber(builder, "trackingErrorRatio", trackingRatio);
+            AppendBoolean(builder, "saturated", saturationRatio > 0.1);
+            AppendString(builder, "achievedQuality",
+                "propulsion_measured_previous_physics_tick_wheels_excluded");
             builder.Append('}');
             Send(builder.ToString());
+        }
+
+        private WrenchValue MeasurePropulsionWrench()
+        {
+            if (vessel == null)
+            {
+                return WrenchValue.Zero;
+            }
+            var force = Vector3Value.Zero;
+            var torque = Vector3Value.Zero;
+            foreach (var engine in EngineModules())
+            {
+                var thrust = Mathf.Max(0f, engine.GetCurrentThrust());
+                var transforms = engine.thrustTransforms;
+                if (thrust <= 0f || transforms == null || transforms.Count == 0)
+                {
+                    continue;
+                }
+                var perNozzle = thrust / transforms.Count;
+                for (var index = 0; index < transforms.Count; index++)
+                {
+                    var nozzle = transforms[index];
+                    if (nozzle == null) continue;
+                    var worldForce = -nozzle.forward.normalized * perNozzle;
+                    force += ToDomain(WorldVectorToBody(worldForce));
+                    torque += ToDomain(WorldVectorToBody(
+                        Vector3.Cross(nozzle.position - vessel.CurrentCoM, worldForce)));
+                }
+            }
+            foreach (var rcs in RcsModules())
+            {
+                if (rcs.thrusterTransforms == null || rcs.thrustForces == null)
+                {
+                    continue;
+                }
+                var count = Math.Min(rcs.thrusterTransforms.Count, rcs.thrustForces.Length);
+                for (var index = 0; index < count; index++)
+                {
+                    var nozzle = rcs.thrusterTransforms[index];
+                    // KSP stores signed per-nozzle thrust; magnitude is the
+                    // achieved force while the transform provides direction.
+                    var thrust = Mathf.Abs(rcs.thrustForces[index]);
+                    if (nozzle == null || thrust <= 0f) continue;
+                    var axis = (rcs.useZaxis ? nozzle.forward : nozzle.up).normalized;
+                    var worldForce = -axis * thrust;
+                    force += ToDomain(WorldVectorToBody(worldForce));
+                    torque += ToDomain(WorldVectorToBody(
+                        Vector3.Cross(nozzle.position - vessel.CurrentCoM, worldForce)));
+                }
+            }
+            return new WrenchValue(force, torque);
+        }
+
+        private void SendControlAuthorityState(string reason)
+        {
+            if (stateClient == null || control == null)
+            {
+                return;
+            }
+            var authority = control.Authority;
+            var now = Time.realtimeSinceStartup;
+            var builder = new StringBuilder(512);
+            builder.Append('{');
+            AppendString(builder, "type", "ksp_control_authority_state", true);
+            AppendNumber(builder, "version", ControlProtocolVersion);
+            AppendString(builder, "vesselId", ActiveVesselId());
+            AppendString(builder, "vessel", vessel == null ? string.Empty : vessel.vesselName);
+            AppendNumber(builder, "state", (int)authority.Mode);
+            AppendString(builder, "controllerId", authority.ControllerId);
+            AppendString(builder, "leaseId", authority.LeaseId);
+            AppendNumber(builder, "priority", authority.Priority);
+            AppendNumber(builder, "leaseRemainingSeconds",
+                authority.Mode == ControlAuthorityMode.Owned ? Math.Max(0.0, authority.ExpiresAt - now) : 0.0);
+            AppendBoolean(builder, "sasSuppressed", sasOverrideActive);
+            AppendBoolean(builder, "emergencyStop", authority.Mode == ControlAuthorityMode.EmergencyStop);
+            AppendNumber(builder, "lastSequence", authority.LastSequence);
+            AppendString(builder, "reason", reason ?? authority.Reason);
+            builder.Append('}');
+            Send(builder.ToString());
+        }
+
+        private bool TargetsActiveVessel(string vesselId)
+        {
+            return vessel != null && !string.IsNullOrEmpty(vesselId) &&
+                string.Equals(vesselId, ActiveVesselId(), StringComparison.OrdinalIgnoreCase);
+        }
+
+        private string ActiveVesselId()
+        {
+            return vessel == null ? string.Empty : vessel.id.ToString("N");
+        }
+
+        private void StopAllVehicleControl()
+        {
+            wrenchActive = false;
+            requestedForce = Vector3.zero;
+            requestedTorque = Vector3.zero;
+            rawRequestedWrench = WrenchValue.Zero;
+            requestedWrench = WrenchValue.Zero;
+            allocatedWrench = WrenchValue.Zero;
+            wrenchFeedbackPending = false;
+            wrenchReason = "control_stopped";
+            RestoreBodyEngineStates();
+            RestoreDirectRcsStates();
+            RestoreDirectWheelStates();
+            RestoreRcsActionGroup();
+            RestoreSasState();
+            wheelOverrides.Clear();
+            engineOverrides.Clear();
+            rcsOverrides.Clear();
+            if (control != null)
+            {
+                control.ResetSafety(Time.realtimeSinceStartup);
+            }
+        }
+
+        private static void ClearFlightControlState(FlightCtrlState state)
+        {
+            state.X = 0f;
+            state.Y = 0f;
+            state.Z = 0f;
+            state.pitch = 0f;
+            state.yaw = 0f;
+            state.roll = 0f;
+            state.mainThrottle = 0f;
+            state.wheelThrottle = 0f;
+            state.wheelSteer = 0f;
+        }
+
+        private void AcquireRcsActionGroupOverride()
+        {
+            if (vessel == null)
+            {
+                return;
+            }
+            if (!rcsActionGroupOverridden)
+            {
+                rcsActionGroupWasEnabled = vessel.ActionGroups[KSPActionGroup.RCS];
+                rcsActionGroupOverridden = true;
+            }
+            vessel.ActionGroups.SetGroup(KSPActionGroup.RCS, true);
+        }
+
+        private void RestoreRcsActionGroup()
+        {
+            if (!rcsActionGroupOverridden)
+            {
+                return;
+            }
+            if (vessel != null)
+            {
+                vessel.ActionGroups.SetGroup(KSPActionGroup.RCS, rcsActionGroupWasEnabled);
+            }
+            rcsActionGroupOverridden = false;
+            rcsActionGroupWasEnabled = false;
+        }
+
+        private static Vector3Value ToDomain(Vector3 value)
+        {
+            return new Vector3Value(value.x, value.y, value.z);
+        }
+
+        private static Vector3 ToUnity(Vector3Value value)
+        {
+            return new Vector3((float)value.X, (float)value.Y, (float)value.Z);
+        }
+
+        private static ControlSafetyPolicy LoadSafetyPolicy()
+        {
+            var policy = new ControlSafetyPolicy();
+            try
+            {
+                var nodes = GameDatabase.Instance == null
+                    ? null
+                    : GameDatabase.Instance.GetConfigNodes("KERBAL_ROS2_CONTROL");
+                if (nodes == null || nodes.Length == 0)
+                {
+                    return policy;
+                }
+                var node = nodes[0];
+                policy.MaximumForce = PositiveConfig(node, "maxForceN", policy.MaximumForce);
+                policy.MaximumTorque = PositiveConfig(node, "maxTorqueNm", policy.MaximumTorque);
+                policy.MaximumAngularSpeed = PositiveConfig(
+                    node, "maxAngularSpeedRadSec", policy.MaximumAngularSpeed);
+                policy.MaximumForceSlew = PositiveConfig(
+                    node, "maxForceSlewNPerSec", policy.MaximumForceSlew);
+                policy.MaximumTorqueSlew = PositiveConfig(
+                    node, "maxTorqueSlewNmPerSec", policy.MaximumTorqueSlew);
+                policy.MaximumContinuousActuation = PositiveConfig(
+                    node, "maxContinuousActuationSec", policy.MaximumContinuousActuation);
+                policy.ResetIdleDuration = PositiveConfig(
+                    node, "continuousResetIdleSec", policy.ResetIdleDuration);
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning("[KerbalLiDAR] Invalid KERBAL_ROS2_CONTROL config: " + exception.Message);
+            }
+            return policy;
+        }
+
+        private static double PositiveConfig(ConfigNode node, string name, double fallback)
+        {
+            if (node == null)
+            {
+                return fallback;
+            }
+            double parsed;
+            return double.TryParse(
+                node.GetValue(name), NumberStyles.Float, CultureInfo.InvariantCulture, out parsed) &&
+                IsFinite(parsed) && parsed > 0.0
+                ? parsed
+                : fallback;
         }
 
         private StringBuilder BeginActuatorState(string kind, string name, Part targetPart)
@@ -1186,6 +1870,31 @@ namespace KerbalLiDAR
                 Vector3.Dot(world, BodyForwardWorld()),
                 Vector3.Dot(world, BodyLeftWorld()),
                 Vector3.Dot(world, BodyUpWorld()));
+        }
+
+        private Vector3 VesselAngularVelocityWorld()
+        {
+            if (vessel == null)
+            {
+                return Vector3.zero;
+            }
+            var reference = vessel.ReferenceTransform;
+            return reference == null
+                ? vessel.angularVelocity
+                : reference.rotation * vessel.angularVelocity;
+        }
+
+        private Vector3 VesselAngularVelocityBody()
+        {
+            if (vessel == null)
+            {
+                return Vector3.zero;
+            }
+            // VesselPrecalculate stores angularVelocity in ReferenceTransform
+            // local axes (right, forward, down). ROS base_link is
+            // (forward, left, up).
+            var local = vessel.angularVelocity;
+            return new Vector3(local.y, -local.x, -local.z);
         }
 
         private static Vector3d GeodeticPosition(double latitudeDegrees, double longitudeDegrees, double altitude, double radius)
@@ -1319,6 +2028,12 @@ namespace KerbalLiDAR
             builder.Append(value.ToString("R", CultureInfo.InvariantCulture));
         }
 
+        private static void AppendNumber(StringBuilder builder, string name, long value)
+        {
+            Prefix(builder, name, false);
+            builder.Append(value.ToString(CultureInfo.InvariantCulture));
+        }
+
         private static void AppendBoolean(StringBuilder builder, string name, bool value)
         {
             Prefix(builder, name, false);
@@ -1331,6 +2046,24 @@ namespace KerbalLiDAR
             builder.Append('[').Append(value.x.ToString("R", CultureInfo.InvariantCulture)).Append(',')
                 .Append(value.y.ToString("R", CultureInfo.InvariantCulture)).Append(',')
                 .Append(value.z.ToString("R", CultureInfo.InvariantCulture)).Append(']');
+        }
+
+        private static void AppendWrench(StringBuilder builder, string name, WrenchValue value)
+        {
+            Prefix(builder, name, false);
+            builder.Append('{');
+            AppendDomainVector(builder, "force", value.Force, true);
+            AppendDomainVector(builder, "torque", value.Torque, false);
+            builder.Append('}');
+        }
+
+        private static void AppendDomainVector(
+            StringBuilder builder, string name, Vector3Value value, bool first)
+        {
+            Prefix(builder, name, first);
+            builder.Append('[').Append(value.X.ToString("R", CultureInfo.InvariantCulture)).Append(',')
+                .Append(value.Y.ToString("R", CultureInfo.InvariantCulture)).Append(',')
+                .Append(value.Z.ToString("R", CultureInfo.InvariantCulture)).Append(']');
         }
 
         private static void AppendQuaternion(StringBuilder builder, string name, Quaternion value)

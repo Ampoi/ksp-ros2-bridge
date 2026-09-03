@@ -3,6 +3,7 @@ import unittest
 
 from debris_orbit.core import (
     body_orientation_for_sensor_look_at,
+    body_orientation_for_sensor_direction,
     detumble_required,
     euclidean_clusters,
     integrate_world_orientation,
@@ -52,6 +53,24 @@ class CoreTests(unittest.TestCase):
         sensor_forward_world = rotate_vector(body_world, sensor_forward_body)
         for actual, expected in zip(sensor_forward_world, (0.0, 0.0, 1.0)):
             self.assertAlmostEqual(actual, expected, places=7)
+
+    def test_minimal_sensor_aim_preserves_current_pose_when_already_aligned(self):
+        current = look_at_quaternion((0.0, 1.0, 0.0), (1.0, 0.0, 0.0))
+        desired = body_orientation_for_sensor_direction(
+            current, (0.0, 0.0, 0.0, 1.0), (0.0, 1.0, 0.0)
+        )
+        alignment = abs(sum(a * b for a, b in zip(current, desired)))
+        self.assertAlmostEqual(alignment, 1.0, places=7)
+
+    def test_minimal_sensor_aim_changes_only_required_pointing_angle(self):
+        current = (0.0, 0.0, 0.0, 1.0)
+        desired = body_orientation_for_sensor_direction(
+            current, (0.0, 0.0, 0.0, 1.0), (math.cos(0.1), math.sin(0.1), 0.0)
+        )
+        result = rotate_vector(desired, (1.0, 0.0, 0.0))
+        self.assertAlmostEqual(result[0], math.cos(0.1), places=7)
+        self.assertAlmostEqual(result[1], math.sin(0.1), places=7)
+        self.assertAlmostEqual(result[2], 0.0, places=7)
 
     def test_search_is_bounded_periodic_and_not_continuously_rotating(self):
         center = (1.0, 0.0, 0.0)
@@ -118,7 +137,6 @@ class CoreTests(unittest.TestCase):
             topics.ground_truth_pose,
             "/ksp_vessel/ground_truth/pose",
         )
-        self.assertEqual(topics.body_wrench, "/ksp_vessel/body_wrench")
         self.assertEqual(
             topics.control_setpoint,
             "/ksp_vessel/demos/debris_orbit/inspector_1/setpoint",

@@ -18,6 +18,8 @@ active vessel内の`ModuleWheelBase`を自動検出し、共有の型付きTopic
 | Field | 単位 | 内容 |
 |---|---|---|
 | `header` | — | 現行bridgeでは指令変換に使用しない |
+| `vessel_id` / `controller_id` / `lease_id` | — | 取得済みauthority identity |
+| `sequence` | — | 同じlease内で単調増加する番号 |
 | `id` | — | 対象の`wheel_<persistentId>_<moduleIndex>` |
 | `enabled` | — | ホイールモーターを有効化 |
 | `target_angular_velocity` | rad/s | 目標回転速度 |
@@ -26,9 +28,9 @@ active vessel内の`ModuleWheelBase`を自動検出し、共有の型付きTopic
 | `timeout_sec` | s | override時間。0ならbridge既定値 |
 
 ```bash
-ros2 topic pub -r 10 /ksp_vessel/actuators/wheel/command \
+ros2 topic pub --once /ksp_vessel/actuators/wheel/command \
   ksp_ros2_interfaces/msg/WheelCommand \
-  "{id: wheel_12345_2, enabled: true, target_angular_velocity: 12.0, steering_angle: 0.2, max_drive_torque: 20.0, timeout_sec: 0.5}"
+  "{vessel_id: <vessel-id>, controller_id: manual, lease_id: <lease-id>, sequence: 2, id: wheel_12345_2, enabled: true, target_angular_velocity: 12.0, steering_angle: 0.2, max_drive_torque: 20.0, timeout_sec: 0.5}"
 ```
 
 ## WheelState
@@ -54,7 +56,7 @@ ros2 topic echo /ksp_vessel/actuators/wheel/state
 
 ## 制御の優先順位と解除
 
-型付きcommandを受けたホイールはBody Wrench allocatorより優先されます。timeoutまたはactive vessel切替時にはdrive / steer入力を0へ戻し、元のmotor有効状態と最大トルクを復元します。`enabled: false`でもcommandのtimeoutまでは個別overrideとして扱われます。
+例のidentityは、先に[機体制御API](/api/vehicle-control)で取得したleaseへ置き換えてください。型付きcommandを受けたホイールはBody Wrench allocatorより優先されます。timeoutまたはactive vessel切替時にはdrive / steer入力を0へ戻し、元のmotor有効状態と最大トルクを復元します。
 
 ## 実装確認先
 

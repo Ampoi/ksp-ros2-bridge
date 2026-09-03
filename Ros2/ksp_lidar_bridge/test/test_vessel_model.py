@@ -8,7 +8,8 @@ from ksp_lidar_bridge.vessel_model import UrdfChunkAssembler
 
 
 SESSION_ID = "a" * 32
-NAME_PREFIX = "ksp_" + SESSION_ID[:8]
+VESSEL_ID = "b" * 32
+NAME_PREFIX = "ksp_" + VESSEL_ID[:8]
 
 
 def proxy_urdf(geometry='<box size="1 2 3"/>'):
@@ -56,6 +57,7 @@ def chunk_packets(urdf=None, chunk_size=40, include_base_pose=True):
         "type": "ksp_active_vessel_proxy",
         "version": 1,
         "sessionId": SESSION_ID,
+        "vesselId": VESSEL_ID,
         "modelId": model_id,
         "geometryPolicy": "primitive_proxy_only",
         "persistencePolicy": "memory_only",
@@ -103,6 +105,7 @@ class UrdfChunkAssemblerTests(unittest.TestCase):
                 model = candidate
 
         self.assertIsNotNone(model)
+        self.assertEqual(model.vessel_id, VESSEL_ID)
         self.assertEqual(model.root_frame, f"{NAME_PREFIX}_link_0000")
         self.assertEqual(model.base_to_root_translation, (1.25, -2.5, 3.75))
         self.assertAlmostEqual(model.base_to_root_rotation[2], 2 ** -0.5)

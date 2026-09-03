@@ -229,6 +229,18 @@ namespace KerbalLiDAR
                 return;
             }
 
+            // The public ROS namespace represents the active vessel. Loaded
+            // nearby vessels may contain sensors with the same configured ID;
+            // streaming them into the same topic corrupts scan chronology and
+            // breaks SLAM/TF identity.
+            if (vessel == null || FlightGlobals.ActiveVessel != vessel)
+            {
+                SendFlightTopicInactive();
+                ClearActiveVesselUrdf();
+                ClearRadarLines();
+                return;
+            }
+
             ProcessActiveVesselUrdf();
 
             if (!lidarEnabled && !radarLinesVisible)
@@ -252,7 +264,7 @@ namespace KerbalLiDAR
         [KSPEvent(guiActive = true, guiName = "Send LiDAR Scan Now", active = true)]
         public void SendScanNow()
         {
-            if (HighLogic.LoadedSceneIsFlight)
+            if (HighLogic.LoadedSceneIsFlight && vessel != null && FlightGlobals.ActiveVessel == vessel)
             {
                 ScanAndSend();
             }
@@ -266,7 +278,7 @@ namespace KerbalLiDAR
             {
                 ClearRadarLines();
             }
-            else if (HighLogic.LoadedSceneIsFlight)
+            else if (HighLogic.LoadedSceneIsFlight && vessel != null && FlightGlobals.ActiveVessel == vessel)
             {
                 ScanAndSend(lidarEnabled);
             }

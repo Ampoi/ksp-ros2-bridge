@@ -8,7 +8,9 @@ Flight中の操作機体を、RViz向けのランタイム用プロキシURDFと
 |---|---|---|---|
 | `/ksp_vessel/robot_description` | `std_msgs/msg/String` | Reliable / transient local / depth 1 | URDF文字列 |
 | `/ksp_vessel/root_frame` | `std_msgs/msg/String` | Reliable / transient local / depth 1 | root link名 |
-| `/tf` | `tf2_msgs/msg/TFMessage` | TransformBroadcaster既定 | 固定jointとセンサーframe |
+| `/tf` | `tf2_msgs/msg/TFMessage` | dynamic | `base_link`からCoM基準proxy root |
+| `/tf_static` | `tf2_msgs/msg/TFMessage` | Reliable / transient local | 固定jointとセンサー取付frame |
+| `/ksp_vessel/lifecycle` | `VesselLifecycle` | Reliable / transient local | vessel ID、generation、model readiness |
 
 ```bash
 ros2 topic echo --once /ksp_vessel/root_frame
@@ -22,7 +24,7 @@ ros2 topic echo --once /ksp_vessel/robot_description
 3. RobotModelのDescription SourceをTopicへ変更
 4. Description Topicを`/ksp_vessel/robot_description`へ設定
 
-bridgeがURDF固定jointを`/tf`へ既定5 Hzでpublishするため、この表示だけなら別の`robot_state_publisher`は不要です。
+bridgeがURDF固定jointを`/tf_static`へpublishし、CoM変化があるroot edgeだけを`/tf`へ既定5 Hzで更新するため、この表示だけなら別の`robot_state_publisher`は不要です。
 
 ## 更新と期限切れ
 
@@ -31,17 +33,19 @@ bridgeがURDF固定jointを`/tf`へ既定5 Hzでpublishするため、この表�
 - 既定の再送間隔は2秒です。
 - 受信モデルの有効期限は`max(3秒, refresh間隔 × 3)`です。既定では6秒です。
 - active vessel切替やFlight終了ではclearを送ります。
+- 同じvessel IDとmodel hashの定期再送ではproxyを再生成しません。
+- Ground Truthで機体切替を先に検出した場合、不一致modelを直ちに切断します。
 - clear時と期限切れ時は、URDFとroot frameへ空文字列をpublishします。
 
 ## センサーframeとの接続
 
-受信センサーパケットの`partFlightId`がURDFのpart mappingに存在すると、bridgeは対応linkの子へセンサーposeをTF配信します。LiDAR / Image / CameraInfoの`frame_id`もこの子frameに一致します。
+受信センサーパケットの`partFlightId`がURDFのpart mappingに存在すると、bridgeは対応linkの子へセンサーposeを`/tf_static`で配信します。LiDAR / Image / CameraInfoの`frame_id`は`ros2_ksp_<sensor_id>_<kind>_frame`形式の安定した子frameに一致します。
 
-モデルがない、期限切れ、またはpart mappingにない場合は、センサーごとのfallback frameを使います。fallbackは機体TFへ接続されません。
+モデルがない、期限切れ、またはpart mappingにない間も同じsensor frame名を使いますが、機体TFへは接続されません。`VesselLifecycle.model_ready`で区別できます。
 
 ## 資産保護と受信検証
 
-- link名は起動ごとのrandom session IDを含む匿名名です。
+- link名はKSPの永続的なvessel IDの短縮prefixを含む匿名名です。同じ機体の再ロードで安定し、機体間では衝突しません。
 - visual / collisionはcollider由来のbox、cylinder、sphereだけです。
 - mesh colliderも近いprimitiveへ単純化し、元meshは含みません。
 - `GameData` path、part名、メーカー名、textureを含みません。
@@ -53,6 +57,6 @@ bridgeがURDF固定jointを`/tf`へ既定5 Hzでpublishするため、この表�
 
 ## 実装確認先
 
-- `Source/KerbalLiDAR/ModuleKerbalLidar.VesselUrdf.cs`
+- `Source/KerbalLiDAR/Api/Ksp/ModuleKerbalLidar.VesselUrdf.cs`
 - `Ros2/ksp_lidar_bridge/ksp_lidar_bridge/vessel_model.py`
 - `Ros2/ksp_lidar_bridge/ksp_lidar_bridge/udp_bridge.py`

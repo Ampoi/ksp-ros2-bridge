@@ -18,7 +18,16 @@ planar_wrench_controller:
   ros__parameters:
     cmd_vel_topic: /cmd_vel
     odom_topic: /ksp_nav2/odom
-    body_wrench_topic: /ksp_vessel/body_wrench
+    wrench_command_topic: /ksp_vessel/control/wrench_command
+    authority_command_topic: /ksp_vessel/control/authority/command
+    authority_state_topic: /ksp_vessel/control/authority/state
+    vessel_lifecycle_topic: /ksp_vessel/lifecycle
+    controller_id: nav2_planar_controller
+    control_priority: 80
+    lease_duration_sec: 2.0
+    lease_renew_period_sec: 0.5
+    suppress_sas: true
+    wrench_timeout_sec: 0.25
     odom_base_frame: nav_base_link
     wrench_frame: base_link
     # LiDAR +X relative to vessel base_link +X. Set radians if not aligned.

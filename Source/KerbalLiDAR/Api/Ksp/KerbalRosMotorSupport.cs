@@ -14,6 +14,9 @@ namespace KerbalLiDAR
         public string type;
         public int version;
         public string name;
+        public string vesselId;
+        public string controllerId;
+        public string leaseId;
         public long partFlightId;
         public string mode;
         public bool hasEnabled;
@@ -535,7 +538,8 @@ namespace KerbalLiDAR
                             continue;
                         }
                         var command = JsonUtility.FromJson<KerbalRosMotorCommand>(json);
-                        if (command == null || command.type != "ksp_motor_command" || command.version != 1)
+                        if (command == null || command.type != "ksp_motor_command" ||
+                            (command.version != 1 && command.version != 2))
                         {
                             continue;
                         }
@@ -563,6 +567,20 @@ namespace KerbalLiDAR
 
         private static void Dispatch(KerbalRosMotorCommand command, int port)
         {
+            if (command.version >= 2)
+            {
+                string rejectionReason;
+                if (!KerbalRosVehicleManager.TryAcceptExclusiveCommand(
+                    command.vesselId, command.controllerId, command.leaseId,
+                    command.sequence, out rejectionReason))
+                {
+                    return;
+                }
+            }
+            else if (KerbalRosVehicleManager.ExclusiveControlActive)
+            {
+                return;
+            }
             var sanitizedName = string.IsNullOrEmpty(command.name)
                 ? string.Empty
                 : KerbalRosMotorNames.Sanitize(command.name, "motor");

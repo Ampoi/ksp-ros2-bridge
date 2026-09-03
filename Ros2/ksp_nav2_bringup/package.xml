@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <package format="3">
   <name>ksp_nav2_bringup</name>
-  <version>0.1.0</version>
+  <version>0.2.0</version>
   <description>Isolated Nav2 and SLAM Toolbox integration for the KSP ROS2 bridge.</description>
   <maintainer email="user@example.com">Kerbal LiDAR Lab</maintainer>
   <license>MIT</license>
@@ -10,6 +10,8 @@
 
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>ksp_ros2_interfaces</exec_depend>
+  <exec_depend>ksp_vehicle_control</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>nav2_amcl</exec_depend>

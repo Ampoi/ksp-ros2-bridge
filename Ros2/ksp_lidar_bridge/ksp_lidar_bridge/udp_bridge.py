@@ -19,6 +19,9 @@ from geometry_msgs.msg import (
     WrenchStamped,
 )
 from ksp_ros2_interfaces.msg import (
+    BodyWrenchCommand,
+    ControlAuthorityCommand,
+    ControlAuthorityState,
     DockingPortCommand,
     DockingPortState,
     EngineCommand,
@@ -31,14 +34,17 @@ from ksp_ros2_interfaces.msg import (
     SeparationState,
     WheelCommand,
     WheelState,
+    WrenchFeedback,
+    VesselLifecycle,
 )
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy._rclpy_pybind11 import RCLError
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from rclpy.time import Time as RosTime
 from sensor_msgs.msg import CameraInfo, Image, JointState, LaserScan, PointCloud2, PointField
 from std_msgs.msg import Float64, String
-from tf2_ros import TransformBroadcaster
+from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
 from trajectory_msgs.msg import JointTrajectory
 
 from .camera_packets import (
@@ -83,9 +89,12 @@ from .vehicle_packets import (
     actuator_command,
     actuator_state_from_packet,
     body_wrench_command,
+    control_authority_command,
     encode_vehicle_command,
     ground_truth_from_packet,
 )
+from .domain.control import authority_state_from_packet, wrench_feedback_from_packet
+from .domain.time_alignment import SimulationClock, extrapolate_pose
 
 
 def positive_float(value: str) -> float:
@@ -124,7 +133,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "--model-tf-rate",
         type=float,
         default=5.0,
-        help="Rate used to refresh active-vessel fixed transforms on /tf.",
+        help="Rate used to refresh the CoM-to-proxy-root transform on /tf.",
     )
     parser.add_argument(
         "--allow-remote-models",
@@ -150,6 +159,14 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "--motor-command-topic",
         default="/ksp_vessel/actuators/servo/trajectory",
     )
+    parser.add_argument(
+        "--enable-legacy-control",
+        action="store_true",
+        help=(
+            "Enable unowned JointTrajectory, Float64 throttle, Twist RCS, and "
+            "JSON propulsion compatibility inputs. Disabled by default."
+        ),
+    )
     parser.add_argument("--joint-states-topic", default="/ksp_vessel/joint_states")
     parser.add_argument("--diagnostics-topic", default="/ros2_ksp/diagnostics")
     parser.add_argument(
@@ -174,7 +191,32 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         default=0.5,
         help="KSP propulsion failsafe timeout for Float64/Twist commands.",
     )
-    parser.add_argument("--body-wrench-topic", default="/ksp_vessel/body_wrench")
+    parser.add_argument(
+        "--body-wrench-command-topic",
+        default="/ksp_vessel/control/wrench_command",
+        help="Lease-bound typed body-wrench command Topic.",
+    )
+    parser.add_argument(
+        "--control-authority-command-topic",
+        default="/ksp_vessel/control/authority/command",
+    )
+    parser.add_argument(
+        "--control-authority-state-topic",
+        default="/ksp_vessel/control/authority/state",
+    )
+    parser.add_argument(
+        "--wrench-feedback-topic",
+        default="/ksp_vessel/control/wrench_feedback",
+    )
+    parser.add_argument(
+        "--vessel-lifecycle-topic",
+        default="/ksp_vessel/lifecycle",
+    )
+    parser.add_argument(
+        "--body-wrench-topic",
+        default="",
+        help="Deprecated unowned WrenchStamped Topic. Empty disables it (default).",
+    )
     parser.add_argument("--ground-truth-prefix", default="/ksp_vessel/ground_truth")
     parser.add_argument("--actuators-prefix", default="/ksp_vessel/actuators")
     parser.add_argument(
@@ -215,6 +257,7 @@ class KerbalLidarUdpBridge(Node):
         self.actuator_last_seen: Dict[str, float] = {}
         self.active_actuator_vessel_id = ""
         self.latched_separations = set()
+        self.separation_mechanisms: Dict[str, str] = {}
         self.docking_publishers: Dict[str, Any] = {}
         self.docking_subscriptions: Dict[str, Any] = {}
         self.docking_last_seen: Dict[str, float] = {}
@@ -231,6 +274,8 @@ class KerbalLidarUdpBridge(Node):
             String, f"{self.bridge_prefix}/status", model_qos
         )
         self.transform_broadcaster = TransformBroadcaster(self)
+        self.static_transform_broadcaster = StaticTransformBroadcaster(self)
+        self.static_sensor_transforms: Dict[str, Tuple[Any, ...]] = {}
         self.model_assembler = UrdfChunkAssembler()
         self.active_model: Optional[VesselProxyModel] = None
         self.active_model_seen_at = 0.0
@@ -240,6 +285,14 @@ class KerbalLidarUdpBridge(Node):
         self.pending_commands: List[Tuple[int, int, Dict[str, Any]]] = []
         self.pending_command_order = 0
         self.command_sequence = 0
+        self.simulation_clock = SimulationClock()
+        self.latest_ground_truth = None
+        self.latest_ground_truth_seen_at = 0.0
+        self.active_vessel_id = ""
+        self.active_vessel_name = ""
+        self.vessel_generation = 0
+        self.lifecycle_state = VesselLifecycle.STATE_UNAVAILABLE
+        self.lifecycle_reason = "waiting_for_ground_truth"
         self.command_endpoint = (args.command_host, args.command_port)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind((args.host, args.port))
@@ -248,9 +301,7 @@ class KerbalLidarUdpBridge(Node):
             args.motor_command_topic
             or f"{self.topic_prefix}/actuators/servo/trajectory"
         )
-        self.motor_command_subscription = self.create_subscription(
-            JointTrajectory, motor_command_topic, self.queue_motor_trajectory, 10
-        )
+        self.motor_command_subscription = None
         self.joint_state_publisher = self.create_publisher(
             JointState, args.joint_states_topic, 10
         )
@@ -260,24 +311,35 @@ class KerbalLidarUdpBridge(Node):
         self.propulsion_state_publisher = self.create_publisher(
             String, args.propulsion_state_topic, 10
         )
-        self.propulsion_command_subscription = self.create_subscription(
-            String,
-            args.propulsion_command_topic,
-            self.send_propulsion_json_command,
-            10,
-        )
-        self.main_throttle_subscription = self.create_subscription(
-            Float64,
-            args.main_throttle_topic,
-            self.send_main_throttle_command,
-            10,
-        )
-        self.rcs_command_subscription = self.create_subscription(
-            Twist,
-            args.rcs_command_topic,
-            self.send_rcs_command,
-            10,
-        )
+        self.propulsion_command_subscription = None
+        self.main_throttle_subscription = None
+        self.rcs_command_subscription = None
+        if args.enable_legacy_control:
+            self.motor_command_subscription = self.create_subscription(
+                JointTrajectory, motor_command_topic, self.queue_motor_trajectory, 10
+            )
+            self.propulsion_command_subscription = self.create_subscription(
+                String,
+                args.propulsion_command_topic,
+                self.send_propulsion_json_command,
+                10,
+            )
+            self.main_throttle_subscription = self.create_subscription(
+                Float64,
+                args.main_throttle_topic,
+                self.send_main_throttle_command,
+                10,
+            )
+            self.rcs_command_subscription = self.create_subscription(
+                Twist,
+                args.rcs_command_topic,
+                self.send_rcs_command,
+                10,
+            )
+            self.get_logger().warning(
+                "Unowned legacy control inputs are enabled; formal authority "
+                "preempts and suspends them inside KSP."
+            )
         command_qos = QoSProfile(depth=10)
         command_qos.reliability = ReliabilityPolicy.RELIABLE
         state_qos = QoSProfile(depth=10)
@@ -290,17 +352,47 @@ class KerbalLidarUdpBridge(Node):
             else f"{self.topic_prefix}/docking_ports"
         )
         self.create_actuator_topics(command_qos, state_qos)
-        self.body_wrench_subscription = self.create_subscription(
-            WrenchStamped,
-            args.body_wrench_topic,
-            self.send_body_wrench,
+        self.control_authority_subscription = self.create_subscription(
+            ControlAuthorityCommand,
+            args.control_authority_command_topic,
+            self.send_control_authority,
             command_qos,
+        )
+        self.body_wrench_command_subscription = self.create_subscription(
+            BodyWrenchCommand,
+            args.body_wrench_command_topic,
+            self.send_body_wrench_command,
+            command_qos,
+        )
+        self.body_wrench_subscription = None
+        if args.body_wrench_topic:
+            self.body_wrench_subscription = self.create_subscription(
+                WrenchStamped,
+                args.body_wrench_topic,
+                self.send_legacy_body_wrench,
+                command_qos,
+            )
+            self.get_logger().warning(
+                "Deprecated unowned body-wrench compatibility is enabled; "
+                "use the lease-bound control API for multi-controller safety."
+            )
+        self.control_authority_state_publisher = self.create_publisher(
+            ControlAuthorityState, args.control_authority_state_topic, model_qos
+        )
+        self.wrench_feedback_publisher = self.create_publisher(
+            WrenchFeedback, args.wrench_feedback_topic, 10
+        )
+        self.vessel_lifecycle_publisher = self.create_publisher(
+            VesselLifecycle, args.vessel_lifecycle_topic, model_qos
         )
         self.ground_truth_pose_publisher = self.create_publisher(
             PoseStamped, f"{ground_truth_prefix}/pose", state_qos
         )
         self.ground_truth_twist_publisher = self.create_publisher(
             TwistStamped, f"{ground_truth_prefix}/twist", state_qos
+        )
+        self.ground_truth_body_twist_publisher = self.create_publisher(
+            TwistStamped, f"{ground_truth_prefix}/twist_body", state_qos
         )
         self.ground_truth_acceleration_publisher = self.create_publisher(
             AccelStamped, f"{ground_truth_prefix}/acceleration", state_qos
@@ -310,10 +402,12 @@ class KerbalLidarUdpBridge(Node):
         tf_rate = max(0.5, min(float(args.model_tf_rate), 60.0))
         self.model_tf_timer = self.create_timer(1.0 / tf_rate, self.publish_model_transforms)
         self.status_publisher.publish(String(data="listening"))
+        self.publish_vessel_lifecycle()
         self.get_logger().info(
             f"Listening on udp://{args.host}:{args.port}; "
             f"publishing sensors under {self.topic_prefix}/<sensor_kind>/<sensor_id>; "
-            f"motor commands {motor_command_topic} -> "
+            f"legacy control={'enabled' if args.enable_legacy_control else 'disabled'}; "
+            f"command UDP -> "
             f"udp://{args.command_host}:{args.command_port}"
         )
         self.get_logger().info(
@@ -375,6 +469,8 @@ class KerbalLidarUdpBridge(Node):
                 self.apply_actuator_manifest(packet)
             elif packet_type == "ksp_wrench_status":
                 self.publish_wrench_status(packet)
+            elif packet_type == "ksp_control_authority_state":
+                self.publish_control_authority_state(packet)
             elif packet_type == "ksp_docking_port_state":
                 self.publish_docking_port_state(packet)
 
@@ -387,7 +483,10 @@ class KerbalLidarUdpBridge(Node):
             return
 
         sensor_id = sanitize_ros_name(packet_sensor_id(packet), "lidar")
-        stamp = self.get_clock().now().to_msg()
+        stamp = self.stamp_for_packet(packet)
+        self.publish_ground_truth_transform_at(
+            float(packet.get("universalTime", math.nan)), stamp
+        )
         frame_id = self.sensor_frame_for_packet(packet, sensor_id, stamp)
 
         if mode == "2D":
@@ -426,7 +525,8 @@ class KerbalLidarUdpBridge(Node):
         if image_publisher is None or info_publisher is None:
             return
 
-        stamp = self.get_clock().now().to_msg()
+        stamp = self.stamp_for_universal_time(frame.universal_time)
+        self.publish_ground_truth_transform_at(frame.universal_time, stamp)
         optical_rotation = camera_optical_rotation(frame.frame_rotation)
         frame_id = self.sensor_frame_for_packet(
             {
@@ -503,7 +603,7 @@ class KerbalLidarUdpBridge(Node):
 
         same_model = (
             self.active_model is not None
-            and self.active_model.session_id == model.session_id
+            and self.active_model.vessel_id == model.vessel_id
             and self.active_model.model_id == model.model_id
         )
         self.active_model = model
@@ -517,7 +617,9 @@ class KerbalLidarUdpBridge(Node):
             f"Activated runtime vessel proxy {model.model_id[:12]}: "
             f"{len(model.part_frames)} links, root={model.root_frame}"
         )
+        self.publish_model_static_transforms()
         self.publish_model_transforms()
+        self.publish_vessel_lifecycle(reason="model_activated")
 
     def consume_model_clear(self, packet: Dict[str, Any], address: Any) -> None:
         if not self.model_source_allowed(address):
@@ -579,16 +681,18 @@ class KerbalLidarUdpBridge(Node):
         sensor_kind: str = "lidar",
     ) -> str:
         sensor_kind = sanitize_ros_name(sensor_kind, "sensor")
-        fallback = f"{sanitize_ros_name(self.args.frame_prefix)}_{part_name}_{sensor_kind}"
+        sensor_frame = (
+            f"{sanitize_ros_name(self.args.frame_prefix, 'ros2_ksp')}_"
+            f"{sanitize_ros_name(part_name, 'sensor')}_{sensor_kind}_frame"
+        )
         part_frame = self.model_frame_for_packet(packet)
         if part_frame is None:
-            return fallback
+            return sensor_frame
 
         pose = sensor_pose_from_packet(packet)
         if pose is None:
             return part_frame
 
-        sensor_frame = f"{part_frame}_{sensor_kind}"
         message = TransformStamped()
         message.header.stamp = stamp
         message.header.frame_id = part_frame
@@ -600,7 +704,14 @@ class KerbalLidarUdpBridge(Node):
         message.transform.rotation.y = pose.rotation[1]
         message.transform.rotation.z = pose.rotation[2]
         message.transform.rotation.w = pose.rotation[3]
-        self.transform_broadcaster.sendTransform(message)
+        fingerprint = (
+            part_frame,
+            *pose.translation,
+            *pose.rotation,
+        )
+        if self.static_sensor_transforms.get(sensor_frame) != fingerprint:
+            self.static_sensor_transforms[sensor_frame] = fingerprint
+            self.static_transform_broadcaster.sendTransform(message)
         return sensor_frame
 
     def active_model_is_current(self) -> bool:
@@ -617,7 +728,6 @@ class KerbalLidarUdpBridge(Node):
             return
 
         stamp = self.get_clock().now().to_msg()
-        messages = []
         root_transform = TransformStamped()
         root_transform.header.stamp = stamp
         root_transform.header.frame_id = "base_link"
@@ -631,7 +741,13 @@ class KerbalLidarUdpBridge(Node):
         root_transform.transform.rotation.y = rotation[1]
         root_transform.transform.rotation.z = rotation[2]
         root_transform.transform.rotation.w = rotation[3]
-        messages.append(root_transform)
+        self.transform_broadcaster.sendTransform(root_transform)
+
+    def publish_model_static_transforms(self) -> None:
+        if self.active_model is None:
+            return
+        stamp = self.get_clock().now().to_msg()
+        messages = []
         for transform in self.active_model.transforms:
             message = TransformStamped()
             message.header.stamp = stamp
@@ -646,7 +762,7 @@ class KerbalLidarUdpBridge(Node):
             message.transform.rotation.w = transform.rotation[3]
             messages.append(message)
         if messages:
-            self.transform_broadcaster.sendTransform(messages)
+            self.static_transform_broadcaster.sendTransform(messages)
 
     def clear_active_model(self, reason: str) -> None:
         if self.active_model is None:
@@ -655,6 +771,7 @@ class KerbalLidarUdpBridge(Node):
         self.active_model_seen_at = 0.0
         self.robot_description_publisher.publish(String(data=""))
         self.root_frame_publisher.publish(String(data=""))
+        self.publish_vessel_lifecycle(model_ready=False, reason=reason)
         self.get_logger().info(reason)
 
     def publisher_for(self, topic: str, type_name: str, message_type: Any) -> Optional[Any]:
@@ -703,6 +820,14 @@ class KerbalLidarUdpBridge(Node):
     def remove_stale_publishers(self) -> None:
         self.camera_assembler.expire()
         now = time.monotonic()
+        if (
+            self.latest_ground_truth_seen_at > 0.0
+            and now - self.latest_ground_truth_seen_at > self.args.topic_timeout_sec
+            and self.lifecycle_state != VesselLifecycle.STATE_STALE
+        ):
+            self.lifecycle_state = VesselLifecycle.STATE_STALE
+            self.lifecycle_reason = "ground_truth_timeout"
+            self.publish_vessel_lifecycle(reason=self.lifecycle_reason)
         for topic in expired_topic_names(
             self.lidar_last_seen, now, self.args.topic_timeout_sec
         ):
@@ -868,39 +993,189 @@ class KerbalLidarUdpBridge(Node):
             return
         self.propulsion_state_publisher.publish(String(data=state_json))
 
-    def send_body_wrench(self, message: WrenchStamped) -> None:
+    def send_control_authority(self, message: ControlAuthorityCommand) -> None:
+        actions = {
+            ControlAuthorityCommand.ACTION_ACQUIRE: "acquire",
+            ControlAuthorityCommand.ACTION_RENEW: "renew",
+            ControlAuthorityCommand.ACTION_RELEASE: "release",
+            ControlAuthorityCommand.ACTION_EMERGENCY_STOP: "emergency_stop",
+            ControlAuthorityCommand.ACTION_CLEAR_EMERGENCY_STOP: "clear_emergency_stop",
+        }
+        action = actions.get(message.action)
+        if action is None:
+            self.get_logger().warning("Dropped unsupported control authority action")
+            return
+        sequence = int(message.sequence)
+        if sequence <= 0:
+            self.get_logger().warning(
+                "Dropped authority command without a positive sequence"
+            )
+            return
+        self.command_sequence = max(self.command_sequence, sequence)
+        try:
+            command = control_authority_command(
+                action,
+                message.vessel_id,
+                message.controller_id,
+                message.lease_id,
+                int(message.priority),
+                message.lease_duration_sec,
+                message.suppress_sas,
+                sequence,
+            )
+        except ValueError as exc:
+            self.get_logger().warning(f"Dropped invalid control authority command: {exc}")
+            return
+        self.send_vehicle_packet(command, "control authority")
+
+    def send_body_wrench_command(self, message: BodyWrenchCommand) -> None:
         if message.header.frame_id not in ("", "base_link"):
             self.get_logger().warning(
-                "Dropped /body_wrench outside base_link frame: "
+                "Dropped wrench command outside base_link frame: "
                 f"{message.header.frame_id}"
             )
             return
-        self.command_sequence += 1
+        sequence = int(message.sequence)
+        if sequence <= 0:
+            self.get_logger().warning(
+                "Dropped wrench command without a positive sequence"
+            )
+            return
+        self.command_sequence = max(self.command_sequence, sequence)
         try:
             command = body_wrench_command(
                 (
-                    message.wrench.force.x,
-                    message.wrench.force.y,
-                    message.wrench.force.z,
+                    message.wrench.force.x, message.wrench.force.y, message.wrench.force.z,
                 ),
                 (
-                    message.wrench.torque.x,
-                    message.wrench.torque.y,
-                    message.wrench.torque.z,
+                    message.wrench.torque.x, message.wrench.torque.y, message.wrench.torque.z,
                 ),
-                self.command_sequence,
-                self.args.vehicle_command_timeout_sec,
+                sequence,
+                message.timeout_sec or self.args.vehicle_command_timeout_sec,
+                message.vessel_id,
+                message.controller_id,
+                message.lease_id,
             )
         except ValueError as exc:
-            self.get_logger().warning(f"Dropped invalid body wrench: {exc}")
+            self.get_logger().warning(f"Dropped invalid body wrench command: {exc}")
             return
         self.send_vehicle_packet(command, "body wrench")
+
+    def send_legacy_body_wrench(self, message: WrenchStamped) -> None:
+        if not self.active_vessel_id:
+            self.get_logger().warning("Dropped legacy body wrench without an active vessel")
+            return
+        self.command_sequence += 1
+        try:
+            lease = control_authority_command(
+                "acquire", self.active_vessel_id, "legacy_wrench", "bridge_legacy_wrench",
+                -100, 1.0, True, self.command_sequence,
+            )
+            self.send_vehicle_packet(lease, "legacy body wrench lease")
+            self.command_sequence += 1
+            command = body_wrench_command(
+                (message.wrench.force.x, message.wrench.force.y, message.wrench.force.z),
+                (message.wrench.torque.x, message.wrench.torque.y, message.wrench.torque.z),
+                self.command_sequence,
+                self.args.vehicle_command_timeout_sec,
+                self.active_vessel_id,
+                "legacy_wrench",
+                "bridge_legacy_wrench",
+            )
+        except ValueError as exc:
+            self.get_logger().warning(f"Dropped invalid legacy body wrench: {exc}")
+            return
+        self.send_vehicle_packet(command, "legacy body wrench")
 
     def send_vehicle_packet(self, command: Dict[str, Any], label: str) -> None:
         try:
             self.sock.sendto(encode_vehicle_command(command), self.command_endpoint)
         except OSError as exc:
             self.get_logger().warning(f"{label} UDP send failed: {exc}")
+
+    def stamp_for_packet(self, packet: Dict[str, Any]) -> Any:
+        try:
+            universal_time = float(packet.get("universalTime"))
+        except (TypeError, ValueError):
+            return self.get_clock().now().to_msg()
+        return self.stamp_for_universal_time(universal_time)
+
+    def stamp_for_universal_time(self, universal_time: float) -> Any:
+        receipt = self.get_clock().now().nanoseconds
+        nanoseconds = self.simulation_clock.map_nanoseconds(universal_time, receipt)
+        return RosTime(nanoseconds=nanoseconds, clock_type=self.get_clock().clock_type).to_msg()
+
+    def publish_ground_truth_transform_at(self, universal_time: float, stamp: Any) -> None:
+        state = self.latest_ground_truth
+        if state is None or not math.isfinite(universal_time):
+            return
+        position, rotation = extrapolate_pose(
+            state.position,
+            state.rotation,
+            state.linear_velocity,
+            state.angular_velocity,
+            universal_time - state.universal_time,
+        )
+        transform = TransformStamped()
+        transform.header.stamp = stamp
+        transform.header.frame_id = "ground_truth_enu"
+        transform.child_frame_id = "base_link"
+        (
+            transform.transform.translation.x,
+            transform.transform.translation.y,
+            transform.transform.translation.z,
+        ) = position
+        (
+            transform.transform.rotation.x,
+            transform.transform.rotation.y,
+            transform.transform.rotation.z,
+            transform.transform.rotation.w,
+        ) = rotation
+        self.transform_broadcaster.sendTransform(transform)
+
+    @staticmethod
+    def rotate_world_to_body(rotation: Tuple[float, float, float, float], vector: Tuple[float, float, float]) -> Tuple[float, float, float]:
+        x, y, z, w = rotation
+        vx, vy, vz = vector
+        # Quaternion inverse rotation, expanded to avoid a geometry dependency.
+        ix = w * vx - y * vz + z * vy
+        iy = w * vy - z * vx + x * vz
+        iz = w * vz - x * vy + y * vx
+        iw = x * vx + y * vy + z * vz
+        return (
+            ix * w + iw * x + iy * z - iz * y,
+            iy * w + iw * y + iz * x - ix * z,
+            iz * w + iw * z + ix * y - iy * x,
+        )
+
+    def publish_vessel_lifecycle(
+        self,
+        model_ready: Optional[bool] = None,
+        reason: Optional[str] = None,
+    ) -> None:
+        active_model_ready = bool(
+            self.active_model is not None
+            and self.active_model_is_current()
+            and self.active_model.vessel_id == self.active_vessel_id
+        )
+        message = VesselLifecycle()
+        message.header.stamp = self.get_clock().now().to_msg()
+        message.header.frame_id = "ground_truth_enu"
+        message.state = self.lifecycle_state
+        message.vessel_id = self.active_vessel_id
+        message.vessel_name = self.active_vessel_name
+        message.generation = self.vessel_generation
+        message.origin_sequence = (
+            0 if self.latest_ground_truth is None else self.latest_ground_truth.origin_sequence
+        )
+        message.world_frame = "ground_truth_enu"
+        message.body_frame = "base_link"
+        message.model_ready = active_model_ready if model_ready is None else model_ready
+        message.model_id = (
+            self.active_model.model_id if active_model_ready else ""
+        )
+        message.reason = reason or self.lifecycle_reason
+        self.vessel_lifecycle_publisher.publish(message)
 
     def publish_ground_truth(self, packet: Dict[str, Any]) -> None:
         try:
@@ -909,7 +1184,24 @@ class KerbalLidarUdpBridge(Node):
             self.get_logger().warning(f"Dropped invalid ground truth: {exc}")
             return
 
-        stamp = self.get_clock().now().to_msg()
+        previous_vessel_id = self.active_vessel_id
+        self.latest_ground_truth = state
+        self.latest_ground_truth_seen_at = time.monotonic()
+        self.active_vessel_id = state.vessel_id
+        self.active_vessel_name = state.vessel_name
+        if (
+            self.active_model is not None
+            and self.active_model.vessel_id != state.vessel_id
+        ):
+            self.clear_active_model("active vessel changed before model refresh")
+        changed = bool(previous_vessel_id and previous_vessel_id != state.vessel_id)
+        if previous_vessel_id != state.vessel_id:
+            self.vessel_generation += 1
+        self.lifecycle_state = (
+            VesselLifecycle.STATE_CHANGED if changed else VesselLifecycle.STATE_ACTIVE
+        )
+        self.lifecycle_reason = "active_vessel_changed" if changed else "ground_truth_active"
+        stamp = self.stamp_for_universal_time(state.universal_time)
         pose = PoseStamped()
         pose.header.stamp = stamp
         pose.header.frame_id = "ground_truth_enu"
@@ -937,6 +1229,27 @@ class KerbalLidarUdpBridge(Node):
         ) = state.angular_velocity
         self.ground_truth_twist_publisher.publish(twist)
 
+        body_linear = state.linear_velocity_body or self.rotate_world_to_body(
+            state.rotation, state.linear_velocity
+        )
+        body_angular = state.angular_velocity_body or self.rotate_world_to_body(
+            state.rotation, state.angular_velocity
+        )
+        body_twist = TwistStamped()
+        body_twist.header.stamp = stamp
+        body_twist.header.frame_id = "base_link"
+        (
+            body_twist.twist.linear.x,
+            body_twist.twist.linear.y,
+            body_twist.twist.linear.z,
+        ) = body_linear
+        (
+            body_twist.twist.angular.x,
+            body_twist.twist.angular.y,
+            body_twist.twist.angular.z,
+        ) = body_angular
+        self.ground_truth_body_twist_publisher.publish(body_twist)
+
         acceleration = AccelStamped()
         acceleration.header.stamp = stamp
         acceleration.header.frame_id = "ground_truth_enu"
@@ -952,18 +1265,8 @@ class KerbalLidarUdpBridge(Node):
         ) = state.angular_acceleration
         self.ground_truth_acceleration_publisher.publish(acceleration)
 
-        transform = TransformStamped()
-        transform.header.stamp = stamp
-        transform.header.frame_id = "ground_truth_enu"
-        transform.child_frame_id = "base_link"
-        transform.transform.translation.x = state.position[0]
-        transform.transform.translation.y = state.position[1]
-        transform.transform.translation.z = state.position[2]
-        transform.transform.rotation.x = state.rotation[0]
-        transform.transform.rotation.y = state.rotation[1]
-        transform.transform.rotation.z = state.rotation[2]
-        transform.transform.rotation.w = state.rotation[3]
-        self.transform_broadcaster.sendTransform(transform)
+        self.publish_ground_truth_transform_at(state.universal_time, stamp)
+        self.publish_vessel_lifecycle()
 
     def publish_actuator_state(self, packet: Dict[str, Any]) -> None:
         try:
@@ -1026,6 +1329,7 @@ class KerbalLidarUdpBridge(Node):
             message.id = name
             message.name = name
             message.mechanism = state["mechanism"]
+            self.separation_mechanisms[name] = message.mechanism
             message.available = bool(state.get("available", False))
             message.separated = bool(state.get("separated", False))
             if message.separated:
@@ -1052,6 +1356,13 @@ class KerbalLidarUdpBridge(Node):
             self.latched_separations,
             vessel_changed,
         ):
+            if not vessel_changed and self.actuator_kinds.get(name) == "separation":
+                # KSP removes a decoupler/fairing from the active vessel in the
+                # same physics transition that completes separation.  The
+                # module can therefore disappear before its final state packet
+                # is emitted.  Manifest removal is authoritative completion.
+                self.publish_terminal_separation(name)
+                continue
             self.remove_actuator(
                 name,
                 "active vessel changed" if vessel_changed else "not in active-vessel manifest",
@@ -1059,6 +1370,7 @@ class KerbalLidarUdpBridge(Node):
         if vessel_changed:
             self.reset_separation_state_publisher()
             self.latched_separations.clear()
+            self.separation_mechanisms.clear()
         if vessel_id:
             self.active_actuator_vessel_id = vessel_id
         now = time.monotonic()
@@ -1121,10 +1433,24 @@ class KerbalLidarUdpBridge(Node):
             SeparationState, f"{base_topic}/state", state_qos
         )
 
+    def publish_terminal_separation(self, name: str) -> None:
+        message = SeparationState()
+        message.header.stamp = self.get_clock().now().to_msg()
+        message.header.frame_id = "base_link"
+        message.id = name
+        message.name = name
+        message.mechanism = self.separation_mechanisms.get(name, "decoupler")
+        message.available = False
+        message.separated = True
+        self.latched_separations.add(name)
+        self.actuator_publishers["separation"].publish(message)
+        self.get_logger().info(f"Latched completed separation: {name}")
+
     def remove_actuator(self, name: str, reason: str) -> None:
         removed_kind = self.actuator_kinds.pop(name, None)
         self.actuator_last_seen.pop(name, None)
         self.latched_separations.discard(name)
+        self.separation_mechanisms.pop(name, None)
         if removed_kind is not None:
             self.get_logger().info(f"Removed actuator ({reason}): {name}")
 
@@ -1220,6 +1546,9 @@ class KerbalLidarUdpBridge(Node):
             self.get_logger().warning(f"Docking command UDP send failed: {exc}")
 
     def send_typed_actuator_command(self, kind: str, message: Any) -> None:
+        vessel_id = getattr(message, "vessel_id", "")
+        controller_id = getattr(message, "controller_id", "")
+        lease_id = getattr(message, "lease_id", "")
         raw_id = getattr(message, "id", "")
         if not isinstance(raw_id, str) or not raw_id.strip():
             self.get_logger().warning(f"Dropped {kind} command without an actuator id")
@@ -1234,14 +1563,23 @@ class KerbalLidarUdpBridge(Node):
                 f"Dropped {kind} command for {name}: actuator type is {known_kind}"
             )
             return
-        self.command_sequence += 1
+        sequence = int(getattr(message, "sequence", 0))
+        if sequence <= 0:
+            self.get_logger().warning(
+                f"Dropped {kind} command without a positive sequence"
+            )
+            return
+        self.command_sequence = max(self.command_sequence, sequence)
         if kind == "separation":
             try:
                 command = actuator_command(
                     kind,
                     name,
                     {"separate": bool(message.separate)},
-                    self.command_sequence,
+                    sequence,
+                    vessel_id,
+                    controller_id,
+                    lease_id,
                 )
             except ValueError as exc:
                 self.get_logger().warning(
@@ -1262,8 +1600,11 @@ class KerbalLidarUdpBridge(Node):
                 return
             command = {
                 "type": "ksp_motor_command",
-                "version": 1,
+                "version": 2,
                 "name": name,
+                "vesselId": vessel_id,
+                "controllerId": controller_id,
+                "leaseId": lease_id,
                 "partFlightId": 0,
                 "mode": mode,
                 "hasEnabled": True,
@@ -1275,7 +1616,7 @@ class KerbalLidarUdpBridge(Node):
                 "hasEffort": message.enabled and mode == "effort",
                 "effort": message.effort,
                 "timeoutSeconds": timeout,
-                "sequence": self.command_sequence,
+                "sequence": sequence,
             }
             try:
                 self.sock.sendto(encode_motor_command(command), self.command_endpoint)
@@ -1298,7 +1639,10 @@ class KerbalLidarUdpBridge(Node):
         elif kind == "rcs":
             values["thrustLimit"] = message.thrust_limit
         try:
-            command = actuator_command(kind, name, values, self.command_sequence)
+            command = actuator_command(
+                kind, name, values, sequence,
+                vessel_id, controller_id, lease_id,
+            )
         except ValueError as exc:
             self.get_logger().warning(f"Dropped invalid {kind} command for {name}: {exc}")
             return
@@ -1306,35 +1650,80 @@ class KerbalLidarUdpBridge(Node):
 
     def publish_wrench_status(self, packet: Dict[str, Any]) -> None:
         try:
-            requested_force = [float(value) for value in packet["requestedForce"]]
-            requested_torque = [float(value) for value in packet["requestedTorque"]]
-            residual_force = [float(value) for value in packet["residualForce"]]
-            residual_torque = [float(value) for value in packet["residualTorque"]]
-            if not all(
-                math.isfinite(value)
-                for value in requested_force + requested_torque + residual_force + residual_torque
-            ):
-                raise ValueError("non-finite wrench status")
-        except (KeyError, TypeError, ValueError) as exc:
+            feedback = wrench_feedback_from_packet(packet)
+        except ValueError as exc:
             self.get_logger().warning(f"Dropped invalid wrench status: {exc}")
             return
-        requested_norm = math.sqrt(sum(value * value for value in requested_force + requested_torque))
-        residual_norm = math.sqrt(sum(value * value for value in residual_force + residual_torque))
-        ratio = residual_norm / max(requested_norm, 1e-9)
+
+        message = WrenchFeedback()
+        message.header.stamp = self.get_clock().now().to_msg()
+        message.header.frame_id = "base_link"
+        message.vessel_id = feedback.vessel_id
+        message.controller_id = feedback.controller_id
+        message.lease_id = feedback.lease_id
+        message.sequence = feedback.sequence
+        message.accepted = feedback.accepted
+        message.reason = feedback.reason
+        self.fill_wrench(message.requested, feedback.requested)
+        self.fill_wrench(message.allocated, feedback.allocated)
+        self.fill_wrench(message.achieved, feedback.achieved)
+        self.fill_wrench(message.allocation_residual, feedback.allocation_residual)
+        self.fill_wrench(message.tracking_residual, feedback.tracking_residual)
+        message.saturation_ratio = feedback.saturation_ratio
+        message.tracking_error_ratio = feedback.tracking_error_ratio
+        message.saturated = feedback.saturated
+        message.achieved_quality = feedback.achieved_quality
+        self.wrench_feedback_publisher.publish(message)
+
         status = DiagnosticStatus()
         status.name = "KSP body wrench allocator"
-        status.hardware_id = "active_vessel"
-        status.level = DiagnosticStatus.WARN if ratio > 0.1 else DiagnosticStatus.OK
-        status.message = "allocator saturated" if ratio > 0.1 else "wrench allocated"
+        status.hardware_id = feedback.vessel_id or "active_vessel"
+        status.level = (
+            DiagnosticStatus.ERROR if not feedback.accepted
+            else DiagnosticStatus.WARN if feedback.saturated
+            else DiagnosticStatus.OK
+        )
+        status.message = (
+            feedback.reason if not feedback.accepted
+            else "allocator saturated" if feedback.saturated
+            else "wrench allocated"
+        )
         status.values = [
-            KeyValue(key="residual_ratio", value=str(ratio)),
-            KeyValue(key="residual_force", value=str(residual_force)),
-            KeyValue(key="residual_torque", value=str(residual_torque)),
+            KeyValue(key="saturation_ratio", value=str(feedback.saturation_ratio)),
+            KeyValue(key="tracking_error_ratio", value=str(feedback.tracking_error_ratio)),
+            KeyValue(key="achieved_quality", value=feedback.achieved_quality),
         ]
-        message = DiagnosticArray()
+        diagnostics = DiagnosticArray()
+        diagnostics.header.stamp = message.header.stamp
+        diagnostics.status = [status]
+        self.diagnostics_publisher.publish(diagnostics)
+
+    @staticmethod
+    def fill_wrench(message: Any, value: Any) -> None:
+        message.force.x, message.force.y, message.force.z = value.force
+        message.torque.x, message.torque.y, message.torque.z = value.torque
+
+    def publish_control_authority_state(self, packet: Dict[str, Any]) -> None:
+        try:
+            state = authority_state_from_packet(packet)
+        except ValueError as exc:
+            self.get_logger().warning(f"Dropped invalid control authority state: {exc}")
+            return
+        message = ControlAuthorityState()
         message.header.stamp = self.get_clock().now().to_msg()
-        message.status = [status]
-        self.diagnostics_publisher.publish(message)
+        message.header.frame_id = "base_link"
+        message.state = state.state
+        message.vessel_id = state.vessel_id
+        message.vessel_name = state.vessel_name
+        message.controller_id = state.controller_id
+        message.lease_id = state.lease_id
+        message.priority = state.priority
+        message.lease_remaining_sec = state.lease_remaining
+        message.sas_suppressed = state.sas_suppressed
+        message.emergency_stop = state.emergency_stop
+        message.last_sequence = state.last_sequence
+        message.reason = state.reason
+        self.control_authority_state_publisher.publish(message)
 
     def publish_motor_state(self, packet: Dict[str, Any]) -> None:
         try:

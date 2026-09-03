@@ -1,4 +1,8 @@
 std_msgs/Header header
+string vessel_id
+string controller_id
+string lease_id
+uint64 sequence
 string id
 uint8 MODE_POSITION=0
 uint8 MODE_VELOCITY=1

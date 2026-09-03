@@ -73,6 +73,14 @@ namespace KerbalLiDAR
         }
 
         private static KerbalRosPropulsionManager instance;
+
+        internal static void SuspendForExclusiveControl()
+        {
+            if (instance != null)
+            {
+                instance.SuspendCommands();
+            }
+        }
         private readonly Dictionary<ModuleEngines, EngineOverride> engineOverrides =
             new Dictionary<ModuleEngines, EngineOverride>();
         private readonly Dictionary<ModuleRCS, RcsOverride> rcsOverrides =
@@ -154,6 +162,12 @@ namespace KerbalLiDAR
                 return true;
             }
 
+            if (KerbalRosVehicleManager.ExclusiveControlActive)
+            {
+                instance.Warn("Ignored legacy propulsion command while formal control authority is active.");
+                return true;
+            }
+
             try
             {
                 var command = JsonUtility.FromJson<KerbalRosPropulsionCommand>(json);
@@ -207,6 +221,12 @@ namespace KerbalLiDAR
                 return;
             }
 
+            if (KerbalRosVehicleManager.ExclusiveControlActive)
+            {
+                SuspendCommands();
+                return;
+            }
+
             if (mainThrottleActive)
             {
                 state.mainThrottle = commandedMainThrottle;
@@ -225,6 +245,11 @@ namespace KerbalLiDAR
 
         private void ApplyCommand(KerbalRosPropulsionCommand command)
         {
+            if (KerbalRosVehicleManager.ExclusiveControlActive)
+            {
+                SuspendCommands();
+                return;
+            }
             AttachToActiveVessel();
             if (attachedVessel == null)
             {
@@ -274,6 +299,21 @@ namespace KerbalLiDAR
             {
                 ApplyModuleCommand(moduleCommands[index], now, timeout);
             }
+        }
+
+        private void SuspendCommands()
+        {
+            commandedMainThrottle = 0f;
+            commandedRcsX = 0f;
+            commandedRcsY = 0f;
+            commandedRcsZ = 0f;
+            commandedRcsPitch = 0f;
+            commandedRcsYaw = 0f;
+            commandedRcsRoll = 0f;
+            mainThrottleActive = false;
+            rcsCommandActive = false;
+            RestoreAllOverrides();
+            RestoreRcsActionGroup();
         }
 
         private void ApplyModuleCommand(KerbalRosPropulsionModuleCommand command, float now, float timeout)

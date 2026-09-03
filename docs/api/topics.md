@@ -13,14 +13,20 @@ Topicは、操作中の機体に属するものを`/ksp_vessel`、bridgeプロ�
 
 | 方向 | Topic | 型 | QoS / 内容 |
 |---|---|---|---|
-| Subscribe | `/ksp_vessel/body_wrench` | `geometry_msgs/msg/WrenchStamped` | Reliable。`base_link`基準のN / N·m要求 |
+| Publish | `/ksp_vessel/lifecycle` | `VesselLifecycle` | Reliable / Transient Local。実機体IDとframe lifecycle |
+| Subscribe | `/ksp_vessel/control/authority/command` | `ControlAuthorityCommand` | Reliable。lease・SAS排他・e-stop |
+| Publish | `/ksp_vessel/control/authority/state` | `ControlAuthorityState` | Reliable / Transient Local。確定したowner |
+| Subscribe | `/ksp_vessel/control/wrench_command` | `BodyWrenchCommand` | Reliable。lease-bound `base_link` Wrench |
+| Publish | `/ksp_vessel/control/wrench_feedback` | `WrenchFeedback` | requested / allocated / achieved / residual |
 | Publish | `/ksp_vessel/ground_truth/pose` | `geometry_msgs/msg/PoseStamped` | Best Effort。ENU位置・姿勢 |
 | Publish | `/ksp_vessel/ground_truth/twist` | `geometry_msgs/msg/TwistStamped` | Best Effort。ENU速度 |
+| Publish | `/ksp_vessel/ground_truth/twist_body` | `geometry_msgs/msg/TwistStamped` | Best Effort。body速度 |
 | Publish | `/ksp_vessel/ground_truth/acceleration` | `geometry_msgs/msg/AccelStamped` | Best Effort。ENU加速度 |
 | Publish | `/ksp_vessel/joint_states` | `sensor_msgs/msg/JointState` | 全ROSサーボの状態 |
 | Publish | `/ksp_vessel/robot_description` | `std_msgs/msg/String` | Reliable / Transient Local。プロキシURDF |
 | Publish | `/ksp_vessel/root_frame` | `std_msgs/msg/String` | Reliable / Transient Local。RViz Fixed Frame名 |
-| Publish | `/tf` | `tf2_msgs/msg/TFMessage` | 機体、センサー、Ground TruthのTF |
+| Publish | `/tf` | `tf2_msgs/msg/TFMessage` | Ground TruthとCoM基準proxy rootのdynamic TF |
+| Publish | `/tf_static` | `tf2_msgs/msg/TFMessage` | proxy固定jointとsensor mount |
 
 ## センサー
 
@@ -47,9 +53,11 @@ LiDARとRGBカメラのIDはVAB/SPHの`Edit ROS2 Sensor ID`で設定します。
 | RCSモジュール | `/ksp_vessel/actuators/rcs/command` | `/ksp_vessel/actuators/rcs/state` | `RcsCommand` / `RcsState` |
 | デカプラー／フェアリング | `/ksp_vessel/actuators/separation/command` | `/ksp_vessel/actuators/separation/state` | `SeparationCommand` / `SeparationState` |
 
-commandはReliable / Volatile / depth 10です。通常のstateはBest Effort / Volatile / depth 10、分離stateはReliable / Transient Local / depth 10です。
+正式commandはauthority leaseと`vessel_id / controller_id / lease_id / sequence`が必要です。commandはReliable / Volatile / depth 10です。通常のstateはBest Effort / Volatile / depth 10、分離stateはReliable / Transient Local / depth 10です。
 
-### 集約操作
+### 集約操作（legacy互換、既定無効）
+
+次の所有権を持たない入力は、bridgeへ`--enable-legacy-control`を付けた場合だけ購読されます。新規実装ではlease付きの型付きcommandを使用してください。
 
 | 方向 | Topic | 型 | 内容 |
 |---|---|---|---|
@@ -75,7 +83,13 @@ commandはReliable / Volatile / depth 10です。通常のstateはBest Effort / 
 | 機体センサー | `--topic-prefix` | `/ksp_vessel` |
 | bridge状態 | `--bridge-prefix` | `/ros2_ksp` |
 | 診断 | `--diagnostics-topic` | `/ros2_ksp/diagnostics` |
-| Body Wrench | `--body-wrench-topic` | `/ksp_vessel/body_wrench` |
+| Wrench command | `--body-wrench-command-topic` | `/ksp_vessel/control/wrench_command` |
+| Authority command | `--control-authority-command-topic` | `/ksp_vessel/control/authority/command` |
+| Authority state | `--control-authority-state-topic` | `/ksp_vessel/control/authority/state` |
+| Wrench feedback | `--wrench-feedback-topic` | `/ksp_vessel/control/wrench_feedback` |
+| Vessel lifecycle | `--vessel-lifecycle-topic` | `/ksp_vessel/lifecycle` |
+| 旧Body Wrench | `--body-wrench-topic` | 空（無効） |
+| legacy集約制御 | `--enable-legacy-control` | false（無効） |
 | Ground Truth | `--ground-truth-prefix` | `/ksp_vessel/ground_truth` |
 | アクチュエータ | `--actuators-prefix` | `/ksp_vessel/actuators` |
 | ドッキングポート | `--docking-ports-prefix` | `/ksp_vessel/docking_ports` |

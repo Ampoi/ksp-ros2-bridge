@@ -1,58 +1,134 @@
 # 機体制御とGround Truth
 
-機体全体へ要求するWrench、シミュレーションのGround Truth、パーツ単位の型付きアクチュエータを提供します。`cmd_vel`や`nav_msgs/msg/Odometry`は使用しません。
+正式な機体制御APIは、KSPの実`vessel_id`へ期限付きleaseを取得してから、body frameのWrenchまたは型付きアクチュエータ指令を送ります。KSP側が所有権、SAS排他、sequence、timeout、安全上限を最終判定します。
 
-## Body Wrench入力
+## 制御フロー
 
-| Topic | 型 | QoS | timeout |
+1. `/ksp_vessel/lifecycle`で`STATE_ACTIVE`または`STATE_CHANGED`と`vessel_id`を受け取る。
+2. `/ksp_vessel/control/authority/command`へ`ACTION_ACQUIRE`を送る。
+3. `/ksp_vessel/control/authority/state`で同じ`controller_id`と`lease_id`の`STATE_OWNED`を確認する。
+4. leaseと同じidentityを持つ指令を、timeoutより短い周期で送る。
+5. 制御終了時に`ACTION_RELEASE`を送る。停止時に送れなくてもleaseは期限切れになる。
+
+`sequence`は同じ`controller_id + lease_id`の全正式指令を通じて単調増加させます。同じ値や古い値はKSPで拒否されます。`priority`が高い新規leaseだけが現在のownerをpreemptできます。同じpriorityでは先に取得したownerを維持します。
+
+## Topic
+
+| 方向 | Topic | 型 | QoS / 内容 |
 |---|---|---|---|
-| `/ksp_vessel/body_wrench` | `geometry_msgs/msg/WrenchStamped` | Reliable / depth 10 | 既定0.5秒 |
+| Subscribe | `/ksp_vessel/control/authority/command` | `ControlAuthorityCommand` | Reliable。取得、更新、解放、e-stop |
+| Publish | `/ksp_vessel/control/authority/state` | `ControlAuthorityState` | Reliable / Transient Local。KSPが確定したowner |
+| Subscribe | `/ksp_vessel/control/wrench_command` | `BodyWrenchCommand` | Reliable。lease-bound body Wrench |
+| Publish | `/ksp_vessel/control/wrench_feedback` | `WrenchFeedback` | requested / allocated / achieved / residual |
+| Publish | `/ksp_vessel/lifecycle` | `VesselLifecycle` | Reliable / Transient Local。機体identityとframe状態 |
 
-`header.frame_id`は空文字列または`base_link`だけを受け付けます。座標は`+X`前、`+Y`左、`+Z`上、forceはN、torqueはN·mです。全成分は有限値である必要があります。
+`BodyWrenchCommand.header.frame_id`は空または`base_link`だけを受け付けます。座標は+X前、+Y左、+Z上、forceはN、torqueはN·mです。`timeout_sec`は0.05〜10秒です。
+
+手動確認では、まずlifecycleから実際のIDを確認します。
 
 ```bash
-ros2 topic pub -r 10 /ksp_vessel/body_wrench geometry_msgs/msg/WrenchStamped \
-  "{header: {frame_id: base_link}, wrench: {force: {x: 1000.0}, torque: {z: 100.0}}}"
+ros2 topic echo --once /ksp_vessel/lifecycle
+ros2 topic echo /ksp_vessel/control/authority/state
+ros2 topic echo /ksp_vessel/control/wrench_feedback
 ```
 
-bridgeは要求をUDPでKSPへ送り、接地ホイール、作動中の主エンジン、RCSへ飽和付きで配分します。機体Rigidbodyへ直接forceを加えません。接地状態、推力方向、重心からのモーメント、推力上限、燃料切れを考慮し、実現できなかった残差比が10%を超えると`/ros2_ksp/diagnostics`へWARNをpublishします。
-
-最後の指令から`--vehicle-command-timeout-sec`が経過すると要求は解除されます。既定値は0.5秒なので、継続制御ではそれより短い周期でpublishしてください。
-
-## Ground Truth出力
-
-| Topic | 型 | frame_id | 内容 |
-|---|---|---|---|
-| `/ksp_vessel/ground_truth/pose` | `geometry_msgs/msg/PoseStamped` | `ground_truth_enu` | 位置m、姿勢quaternion |
-| `/ksp_vessel/ground_truth/twist` | `geometry_msgs/msg/TwistStamped` | `ground_truth_enu` | 線速度m/s、角速度rad/s |
-| `/ksp_vessel/ground_truth/acceleration` | `geometry_msgs/msg/AccelStamped` | `ground_truth_enu` | 線加速度m/s²、角加速度rad/s² |
-| `/tf` | `tf2_msgs/msg/TFMessage` | `ground_truth_enu -> base_link` | poseと同じ位置・姿勢 |
-
-stateとTFは30 Hzで配信し、3つのstate TopicはBest Effortです。`ground_truth_enu`は操作機体を選択した地点を原点とする東・北・上座標で、KSPの浮動原点には依存しません。機体または天体が切り替わると原点、`originSequence`、加速度の微分履歴をリセットします。加速度は速度差分から求める運動学的な値です。
+通常の連続制御には、lease更新とsequence採番を行う`ksp_vehicle_control`を使ってください。
 
 ```bash
-ros2 topic echo /ksp_vessel/ground_truth/pose
-ros2 topic hz /ksp_vessel/ground_truth/twist
-ros2 run tf2_ros tf2_echo ground_truth_enu base_link
+ros2 run ksp_vehicle_control setpoint_controller --ros-args \
+  -p controller_id:=my_controller \
+  -p setpoint_topic:=/my_controller/setpoint
 ```
 
-## 型付きアクチュエータとの優先順位
+## 「要求」と「実現」の違い
 
-ホイール、Engine、RCSの`/ksp_vessel/actuators/<type>/command`は、`id`で指定した対象についてBody Wrench配分より優先されます。commandの`timeout_sec`が0の場合は`--vehicle-command-timeout-sec`を使用し、期限切れ後は個別overrideを解除してBody Wrench配分へ戻ります。有効なtimeout範囲はKSP側で0.05〜10秒です。ROSサーボとリニアモーターはBody Wrenchの配分対象ではなく、専用のモーター制御系で動作します。
+このAPIはN/N·mを受け取りますが、KSPのnormalized flight-control inputを使うため、指定Wrenchを物理的に厳密に生成するforce sourceではありません。
 
-型付きTopicは種類ごとに常設されます。commandはReliable、通常のstateはBest Effortです。
+RCS配分器は、現在有効な各ノズルについて次をKSPと同じ軸規則で評価し、12個の正負操作channelを解きます。
 
-## 起動引数
+- `useZaxis`を含む実際のノズル噴射軸
+- ノズル位置と現在のcenter of massから得るモーメントアーム
+- pitch / yaw / rollとX / Y / Zのenable設定
+- moduleの作動状態と現在の最大推力
 
-| 引数 | 既定値 | 内容 |
+`WrenchFeedback`の値は次の意味です。
+
+| field | 意味 |
+|---|---|
+| `requested` | controllerが送った値 |
+| `allocated` | 安全filterとアクチュエータ配分後の要求値 |
+| `achieved` | 直前のKSP physics tickで観測したengine/RCS推力から再構成した値 |
+| `allocation_residual` | `requested - allocated` |
+| `tracking_residual` | `requested - achieved` |
+| `saturation_ratio` | 配分できなかった割合 |
+| `tracking_error_ratio` | 観測値との差の割合 |
+
+`achieved`にはreaction wheel、タイヤ接触力、空力は含みません。`achieved_quality`に測定遅延と除外対象を明記します。並進による回転や燃料・KSP制御則による差を隠さず、controller側で飽和を判断できます。
+
+## SAS・emergency stop・安全上限
+
+`suppress_sas: true`のleaseを取得すると、ownerが存在する期間を通じてKSP側がSASを停止し、解放または期限切れ時に元の状態へ戻します。個々のトルク指令の有無では切り替えません。
+
+`ACTION_EMERGENCY_STOP`は通常のWrenchと個別overrideをゼロ化し、legacy推進指令を停止し、SASも停止したままlatchします。解除できるのはe-stopを発行した同じ`controller_id + lease_id`だけです。e-stopの状態は機体切替では自動解除されません。
+
+e-stop自体は現在のownerでなくても、activeな`vessel_id`と一意なlease identity、正のsequenceを指定して発行できます。解除は同じidentityでsequenceを増やします。
+
+```bash
+ros2 topic pub --once /ksp_vessel/control/authority/command \
+  ksp_ros2_interfaces/msg/ControlAuthorityCommand \
+  "{action: 4, vessel_id: '<vessel-id>', controller_id: safety_operator, lease_id: '<unique-lease-id>', sequence: 1}"
+
+ros2 topic pub --once /ksp_vessel/control/authority/command \
+  ksp_ros2_interfaces/msg/ControlAuthorityCommand \
+  "{action: 5, vessel_id: '<vessel-id>', controller_id: safety_operator, lease_id: '<unique-lease-id>', sequence: 2}"
+```
+
+KSP側の最終制限は`GameData/KerbalLiDAR/Config/ControlSafety.cfg`で設定します。
+
+| 設定 | 既定値 | 内容 |
+|---|---:|---|
+| `maxForceN` | 250000 | force magnitude上限 |
+| `maxTorqueNm` | 100000 | torque magnitude上限 |
+| `maxAngularSpeedRadSec` | 0.35 | これを超える回転を加速する成分を除去 |
+| `maxForceSlewNPerSec` | 50000 | force変化率上限 |
+| `maxTorqueSlewNmPerSec` | 10000 | torque変化率上限 |
+| `maxContinuousActuationSec` | 30 | 非ゼロ指令の連続時間上限 |
+| `continuousResetIdleSec` | 0.5 | 連続時間limitを解除するゼロ指令時間 |
+
+ROS側の上限よりKSP側を大きく設定し、KSP側は故障時の最終境界として使うのが基本です。
+
+## Ground Truthとframe
+
+| Topic | frame_id | 内容 |
 |---|---|---|
-| `--body-wrench-topic` | `/ksp_vessel/body_wrench` | Wrench入力Topic |
-| `--ground-truth-prefix` | `/ksp_vessel/ground_truth` | 3つのGround Truth Topicのprefix |
-| `--actuators-prefix` | `/ksp_vessel/actuators` | 型付きアクチュエータTopicのprefix |
-| `--vehicle-command-timeout-sec` | `0.5` | Wrenchと型付きcommandの既定timeout |
+| `/ksp_vessel/ground_truth/pose` | `ground_truth_enu` | 位置m、姿勢quaternion |
+| `/ksp_vessel/ground_truth/twist` | `ground_truth_enu` | world-frame速度m/s、角速度rad/s |
+| `/ksp_vessel/ground_truth/twist_body` | `base_link` | body-frame速度m/s、角速度rad/s |
+| `/ksp_vessel/ground_truth/acceleration` | `ground_truth_enu` | world-frame運動学的加速度 |
+| `/tf` | `ground_truth_enu -> base_link` | KSP universal time基準のdynamic TF |
+| `/tf_static` | proxy fixed joint / sensor mount | 取付姿勢 |
 
-## 実装確認先
+センサーデータのtimestampはKSP universal timeからROS clockへ対応付けます。Ground Truthの最新poseを同じセンサー時刻へ最大0.1秒外挿してTFを補うため、点群より遅い姿勢周期によるfuture extrapolationを避けます。
 
-- `Source/KerbalLiDAR/Api/Ksp/KerbalRosVehicleSupport.cs`
-- `Ros2/ksp_lidar_bridge/ksp_lidar_bridge/vehicle_packets.py`
-- `Ros2/ksp_lidar_bridge/ksp_lidar_bridge/udp_bridge.py`
+`VesselLifecycle`は`UNAVAILABLE / ACTIVE / CHANGED / STALE`、generation、origin sequence、model readinessを公開します。display nameではなく`vessel_id`が制御identityです。機体切替時、既存leaseと不一致なproxy modelは即座に無効になります。
+
+## 型付きアクチュエータ
+
+`EngineCommand`、`RcsCommand`、`WheelCommand`、`MotorCommand`、`SeparationCommand`も同じ`vessel_id`、`controller_id`、`lease_id`、`sequence`を必須とします。ownerでない指令はKSPが拒否します。不可逆な分離操作もlease外では実行されません。
+
+旧`WrenchStamped` APIは既定で無効です。移行確認に限りbridgeへ`--body-wrench-topic /ksp_vessel/body_wrench`を与えると、最低priorityの互換leaseで有効化できます。メインスロットル、Twist RCS、JointTrajectory、JSON推進APIもlegacy互換経路で、既定では購読しません。必要な場合だけbridgeへ`--enable-legacy-control`を付けてください。正式leaseが存在する間はKSP側でもlegacy指令を停止します。
+
+## Bridge起動引数
+
+| 引数 | 既定値 |
+|---|---|
+| `--body-wrench-command-topic` | `/ksp_vessel/control/wrench_command` |
+| `--control-authority-command-topic` | `/ksp_vessel/control/authority/command` |
+| `--control-authority-state-topic` | `/ksp_vessel/control/authority/state` |
+| `--wrench-feedback-topic` | `/ksp_vessel/control/wrench_feedback` |
+| `--vessel-lifecycle-topic` | `/ksp_vessel/lifecycle` |
+| `--body-wrench-topic` | 空。旧API無効 |
+| `--enable-legacy-control` | false。所有権なしの旧集約入力を明示的に有効化 |
+| `--ground-truth-prefix` | `/ksp_vessel/ground_truth` |
+| `--actuators-prefix` | `/ksp_vessel/actuators` |
+| `--vehicle-command-timeout-sec` | `0.5` |

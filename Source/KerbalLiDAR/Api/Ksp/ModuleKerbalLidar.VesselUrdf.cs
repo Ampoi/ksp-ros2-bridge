@@ -21,6 +21,8 @@ namespace KerbalLiDAR
         private float nextActiveVesselUrdfTime;
         private bool activeVesselUrdfAnnounced;
         private bool remoteUrdfWarningShown;
+        private string cachedProxyTopology = "";
+        private string cachedProxyUrdf = "";
 
         private struct ProxyBounds
         {
@@ -188,13 +190,22 @@ namespace KerbalLiDAR
             }
 
             var linkNames = new Dictionary<Part, string>();
-            var namePrefix = "ksp_" + vesselUrdfSessionId.Substring(0, 8);
+            // Runtime transport sessions are intentionally ephemeral, but TF
+            // frame names must remain stable while the same vessel is reloaded.
+            var vesselId = vessel.id.ToString("N");
+            var namePrefix = "ksp_" + vesselId.Substring(0, 8);
             for (var index = 0; index < orderedParts.Count; index++)
             {
                 linkNames[orderedParts[index]] = namePrefix + "_link_" + index.ToString("D4", CultureInfo.InvariantCulture);
             }
 
-            var urdf = BuildProxyUrdf(orderedParts, linkNames, namePrefix);
+            var topology = ProxyTopologySignature(orderedParts);
+            if (!string.Equals(topology, cachedProxyTopology, StringComparison.Ordinal))
+            {
+                cachedProxyTopology = topology;
+                cachedProxyUrdf = BuildProxyUrdf(orderedParts, linkNames, namePrefix);
+            }
+            var urdf = cachedProxyUrdf;
             modelId = Sha256Hex(Encoding.UTF8.GetBytes(urdf));
 
             var rootPart = orderedParts[0];
@@ -215,6 +226,7 @@ namespace KerbalLiDAR
             AppendProperty(bundle, "type", VesselProxyType, true);
             AppendProperty(bundle, "version", VesselProxyVersion, false);
             AppendProperty(bundle, "sessionId", vesselUrdfSessionId, false);
+            AppendProperty(bundle, "vesselId", vesselId, false);
             AppendProperty(bundle, "modelId", modelId, false);
             AppendProperty(bundle, "geometryPolicy", "primitive_proxy_only", false);
             AppendProperty(bundle, "persistencePolicy", "memory_only", false);
@@ -249,6 +261,20 @@ namespace KerbalLiDAR
             bundle.Append(']');
             bundle.Append('}');
             return bundle.ToString();
+        }
+
+        private string ProxyTopologySignature(IList<Part> orderedParts)
+        {
+            var signature = new StringBuilder(orderedParts.Count * 32 + 40);
+            signature.Append(vessel.id.ToString("N"));
+            foreach (var vesselPart in orderedParts)
+            {
+                signature.Append('|').Append((long)vesselPart.flightID);
+                signature.Append(':').Append(
+                    vesselPart.parent == null ? -1L : (long)vesselPart.parent.flightID
+                );
+            }
+            return signature.ToString();
         }
 
         private List<Part> OrderedVesselParts()

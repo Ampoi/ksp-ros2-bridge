@@ -45,7 +45,7 @@ ros2 run ksp_lidar_bridge udp_bridge \
 
 ## 速度指令・推力がすぐ止まる
 
-正常なフェイルセーフ動作です。モーターvelocity modeと推進系は既定0.5秒で停止します。`ros2 topic pub -r 5`などで継続送信してください。
+正常なフェイルセーフ動作です。正式commandはtimeoutより短い周期で、同じlease内の`sequence`を増やしながら送信してください。固定sequenceを繰り返す`ros2 topic pub -r`はreplayとして拒否されるため、連続制御には`ksp_vehicle_control`などのcontroller nodeを使います。legacy互換のモーターvelocity / 推進系も既定0.5秒で停止します。
 
 ## RVizに機体が出ない
 

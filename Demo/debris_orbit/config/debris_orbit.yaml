@@ -4,7 +4,8 @@ debris_orbit:
     enabled: false
 
     # 機体・搭載センサーとの紐付け。VAB/SPHで設定したSensor IDに合わせる。
-    platform_id: demo_vehicle
+    # デモ出力のnamespace。KSP機体を選択するIDではない。
+    demo_instance_id: demo_vehicle
     lidar_sensor_id: front_lidar
     camera_sensor_id: orbit_camera
     vessel_topic_prefix: /ksp_vessel
@@ -26,8 +27,8 @@ debris_orbit:
     orbit_plane_normal: [0.0, 0.0, 1.0]
 
     # 高速回転中は目標指向を行わず、デタンブル指令を先に出す。
-    detumble_enter_rate_deg_s: 10.0
-    detumble_exit_rate_deg_s: 3.0
+    detumble_enter_rate_deg_s: 6.0
+    detumble_exit_rate_deg_s: 2.0
 
     # 対象喪失時は最後の視線を中心に、小角度の周期スキャンを行う。
     # sin波で必ず往復するため、一方向へ回転し続けない。
@@ -73,27 +74,40 @@ debris_orbit:
 
 debris_orbit_controller:
   ros__parameters:
-    # 誘導ノードの目標姿勢・目標位置を、機体座標のWrenchへ変換する。
-    platform_id: demo_vehicle
+    # 共通制御パッケージ。lifecycleのvessel_idへleaseを取得してから指令する。
+    controller_id: debris_orbit_demo
     vessel_topic_prefix: /ksp_vessel
     pose_topic: ""
     twist_topic: ""
     setpoint_topic: ""
-    body_wrench_topic: ""
+    wrench_command_topic: ""
+    authority_command_topic: ""
+    authority_state_topic: ""
+    vessel_lifecycle_topic: ""
     controller_status_topic: ""
     world_frame: ground_truth_enu
     body_frame: base_link
 
+    control_priority: 100
+    lease_duration_sec: 2.0
+    lease_renew_period_sec: 0.5
+    suppress_sas: true
+    command_timeout_sec: 0.25
+
     # 機体ごとに調整するPDゲインとリミット（N, N*m）。
-    position_kp: 120.0
-    velocity_kd: 350.0
-    attitude_kp: 800.0
-    angular_kd: 300.0
-    max_force: 5000.0
-    max_torque: 300.0
-    detumble_kd: 50.0
-    detumble_max_torque: 100.0
-    command_ramp_sec: 2.0
+    position_kp: 5.0
+    velocity_kd: 20.0
+    attitude_kp: 80.0
+    angular_kd: 400.0
+    max_force: 20.0
+    max_torque: 2.0
+    # 探索・対象取得中の姿勢保持は低トルクに制限する。
+    attitude_hold_max_torque: 0.5
+    # この角速度を超えると姿勢誤差より制動を優先する。
+    attitude_hold_rate_limit_deg_s: 2.5
+    detumble_kd: 20.0
+    detumble_max_torque: 1.0
+    command_ramp_sec: 3.0
     state_timeout_sec: 0.5
     setpoint_timeout_sec: 0.5
     control_rate_hz: 20.0

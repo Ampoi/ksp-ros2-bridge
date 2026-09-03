@@ -15,7 +15,7 @@
 
 | 方向 | Topic | 型 | 内容 |
 |---|---|---|---|
-| 入力 | `/ksp_vessel/actuators/servo/trajectory` | `trajectory_msgs/msg/JointTrajectory` | 複数サーボの位置、速度、effort上限 |
+| 入力 | `/ksp_vessel/actuators/servo/trajectory` | `trajectory_msgs/msg/JointTrajectory` | legacy互換の複数サーボ指令（既定無効） |
 | 出力 | `/ksp_vessel/joint_states` | `sensor_msgs/msg/JointState` | position、velocity、effort |
 | 出力 | `/ros2_ksp/diagnostics` | `diagnostic_msgs/msg/DiagnosticArray` | 電源・engage・lock・推定電流 |
 | 入力 | `/ksp_vessel/actuators/servo/command` | `ksp_ros2_interfaces/msg/MotorCommand` | `id`で指定する型付き指令 |
@@ -36,7 +36,11 @@ linear_<partFlightId>
 
 型付きcommand TopicはReliable、state TopicはBest Effortで、どちらもdepth 10です。Topicは常設され、複数モーターのメッセージが同じTopicを流れます。
 
-## 位置指令
+## JointTrajectory互換入力
+
+`JointTrajectory`は所有権fieldを持てないためlegacy互換扱いで、既定ではbridgeが購読しません。移行時だけbridgeへ`--enable-legacy-control`を付けてください。新規コードでは後述のlease付き`MotorCommand`を使用します。
+
+### 位置指令
 
 サーボを90度へ、速度上限0.5 rad/s、effort上限100 N·mで動かします。
 
@@ -48,7 +52,7 @@ ros2 topic pub --once /ksp_vessel/actuators/servo/trajectory \
 
 `positions`があるpointはposition modeです。`velocities`も指定した場合、サーボでは移動速度上限、リニアモーターでは`traverseVelocity`として使われます。`effort`は絶対値を上限として扱います。
 
-## 速度指令とフェイルセーフ
+### 速度指令とフェイルセーフ
 
 `positions`を省略し、`velocities`を指定するとvelocity modeになります。
 
@@ -60,7 +64,7 @@ ros2 topic pub -r 10 /ksp_vessel/actuators/servo/trajectory \
 
 velocity modeはKSP側で既定0.5秒の通信タイムアウトを持ちます。継続運転中はタイムアウトより短い周期で再送してください。0速度を受信した場合は現在位置をholdします。position modeは通信断で目標値を破棄しません。
 
-## 複数jointと複数point
+### 複数jointと複数point
 
 - `joint_names`は空にできません。
 - `positions`、`velocities`、`effort`は空配列、または`joint_names`と同じ要素数が必要です。
@@ -84,6 +88,8 @@ velocity modeはKSP側で既定0.5秒の通信タイムアウトを持ちます�
 | MotorCommand field | 内容 |
 |---|---|
 | `header` | 現行bridgeでは指令変換に使用しない |
+| `vessel_id` / `controller_id` / `lease_id` | 取得済みauthority identity |
+| `sequence` | 同じlease内で単調増加する番号 |
 | `id` | 対象のROS joint ID |
 | `mode` | `MODE_POSITION=0`、`MODE_VELOCITY=1`、`MODE_EFFORT=2` |
 | `enabled` | `false`ならモーターをdisengage |
@@ -93,9 +99,9 @@ velocity modeはKSP側で既定0.5秒の通信タイムアウトを持ちます�
 | `timeout_sec` | override時間。0ならbridge既定値 |
 
 ```bash
-ros2 topic pub -r 10 /ksp_vessel/actuators/servo/command \
+ros2 topic pub --once /ksp_vessel/actuators/servo/command \
   ksp_ros2_interfaces/msg/MotorCommand \
-  "{id: servo_12345, mode: 0, enabled: true, position: 1.5708, timeout_sec: 0.5}"
+  "{vessel_id: <vessel-id>, controller_id: manual, lease_id: <lease-id>, sequence: 2, id: servo_12345, mode: 0, enabled: true, position: 1.5708, timeout_sec: 0.5}"
 ```
 
 | MotorState field | 内容 |
@@ -113,7 +119,7 @@ ros2 topic pub -r 10 /ksp_vessel/actuators/servo/command \
 | `locked` | lock状態 |
 | `command_active` | ROS override保持中か |
 
-`MotorCommand`は`JointTrajectory`と同じKSPモーター指令経路を使い、後から届いた指令が適用されます。ROSモーターはBody Wrenchの配分対象ではありません。timeout後は`command_active`がfalseになり、velocity modeは現在位置のholdへ移ります。position modeの目標位置は保持されます。`timeout_sec`の有効範囲はKSP側で0.05〜10秒です。
+例のidentityは、先に[機体制御API](/api/vehicle-control)で取得したleaseへ置き換えてください。`MotorCommand`はownerだけが使用できます。ROSモーターはBody Wrenchの配分対象ではありません。timeout後は`command_active`がfalseになり、velocity modeは現在位置のholdへ移ります。position modeの目標位置は保持されます。
 
 ## DiagnosticStatus
 

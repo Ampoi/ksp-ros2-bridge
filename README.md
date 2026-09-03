@@ -7,11 +7,11 @@ Kerbal Space Program 1.x向けのセンサー・ロボティクスmodです。2D
 起動手順、全Topic、パーツごとの入出力、設定値はVitePressドキュメントにまとめています。
 
 ```bash
-npm install
-npm run docs:dev
+pnpm install
+pnpm run docs:dev
 ```
 
-静的ビルドは`npm run docs:build`です。ドキュメント本体は`docs/`にあります。
+静的ビルドは`pnpm run docs:build`です。ドキュメント本体は`docs/`にあります。
 
 kRPCは使用しません。KSPプラグインがセンサー取得と機体制御を行い、ROS2 bridgeと直接UDP通信するため、`GameData/kRPC`やkRPCクライアントライブラリは不要です。
 
@@ -33,6 +33,11 @@ kRPCは使用しません。KSPプラグインがセンサー取得と機体制�
 - `diagnostic_msgs/msg/DiagnosticArray`による電源状態・推定電流フィードバック
 - KSP標準エンジンとRCSをROS2から列挙し、モジュールごとに起動・停止・個別推力制御
 - ROS2 `Float64`によるメインスロットルと`Twist`によるRCS 6軸制御
+- 実`vessel_id`へ結び付くpriority付き制御lease、SAS排他、emergency stop
+- 各RCSノズルの位置・方向に基づくWrench配分と実現量feedback
+- 共通の`ControlSetpoint`→安全な6DoF機体制御package
+
+コードの責務と依存方向は[モノレポ設計](ARCHITECTURE.md)にまとめています。実行例は`Demo/`、開発用commandの実体は`Development/`で、KSP/ROS2 runtime sourceとは分離しています。
 
 ## ビルド
 
@@ -108,10 +113,11 @@ IDはcraftファイルへ保存され、センサーTopicの名前空間にな�
 mkdir -p ~/ros2_ws/src
 cp -r Ros2/ksp_lidar_bridge ~/ros2_ws/src/
 cp -r Ros2/ksp_ros2_interfaces ~/ros2_ws/src/
+cp -r Ros2/ksp_vehicle_control ~/ros2_ws/src/
 cd ~/ros2_ws
 source /opt/ros/jazzy/setup.bash
 rosdep install --from-paths src --ignore-src --rosdistro jazzy -y
-colcon build --packages-up-to ksp_lidar_bridge
+colcon build --packages-up-to ksp_lidar_bridge ksp_vehicle_control
 source install/setup.bash
 ros2 run ksp_lidar_bridge udp_bridge --host 127.0.0.1 --port 49010
 ```
@@ -158,7 +164,7 @@ Flight中は、現在操作している機体に搭載されたLiDARのうち1�
 
 - URDF: `/ksp_vessel/robot_description` (`std_msgs/msg/String`, transient local)
 - RVizのFixed Frameに使うルート名: `/ksp_vessel/root_frame` (`std_msgs/msg/String`)
-- 固定ジョイントTF: `/tf`（既定5Hz）
+- 固定ジョイント・sensor mount TF: `/tf_static`
 
 確認例:
 
@@ -174,37 +180,42 @@ RViz2ではRobotModel表示のDescription Topicを`/ksp_vessel/robot_description
 送信するものはKSP機体そのものの再配布用URDFではなく、そのセッション中だけ使うプロキシです。
 
 - KSPのmesh、texture、パーツ名、メーカー名、`GameData`パスは含めません。
-- visual/collisionは各パーツで現在描画中のmesh外形から作る、ローカル姿勢付きのbox/cylinder/sphere近似です。描画meshを取得できないパーツではcollider外形を使います。タイヤや構造部材を含め、複数の描画要素は要素ごとに近似し、元meshは含めません。カプセル形状は円柱と球を組み合わせます。link名は起動ごとのランダムsession IDを含みます。
+- visual/collisionは各パーツで現在描画中のmesh外形から作る、ローカル姿勢付きのbox/cylinder/sphere近似です。描画meshを取得できないパーツではcollider外形を使います。タイヤや構造部材を含め、複数の描画要素は要素ごとに近似し、元meshは含めません。カプセル形状は円柱と球を組み合わせます。link名は永続的なKSP vessel IDの短縮prefixを使い、同じ機体の再ロードで安定します。
 - gzipチャンクはSHA-256検証され、ROS2側ではサイズ上限とXML許可リストを適用します。`mesh`や外部URIは拒否します。
 - bridgeはURDFをファイル保存せず、メモリ上だけで保持します。KSPからbridgeへのUDPは既定でloopback限定です。ROS2 Topicの到達範囲は通常のDDS設定に従います。
 - 別ホストのKSPからモデルを受信する場合だけ、KSPの`allowRemoteUrdf = true`とbridgeの`--allow-remote-models`を指定します。ROS2 Topicも同一ホストだけに制限したい場合は、bridgeとROS2 CLIを起動する全ターミナルで`ROS_LOCALHOST_ONLY=1`を設定してください。
 
 ROS2 Topicへ平文をpublishした後、同じホスト上の別プロセスによる購読・rosbag保存まで完全に防ぐことはできません。この実装は再利用可能なゲーム資産を最初から含めず、ネットワーク配布と永続化を既定で避ける設計です。より強いアクセス制御が必要な環境では、OSユーザー分離とSROS2/DDS Securityも併用してください。
 
-## Body Wrench・Ground Truth・アクチュエータ
+## 制御所有権・Body Wrench・Ground Truth
 
-新しい機体I/Oは、機体全体の要求Wrenchと物理アクチュエータ単位の型付きTopicを提供します。`cmd_vel`と`odometry`は使用しません。
+正式な機体I/Oは、active vesselの実IDへ期限付きleaseを取得し、KSP側でSAS排他と安全制限を適用します。
 
-- 入力: `/ksp_vessel/body_wrench` (`geometry_msgs/msg/WrenchStamped`)
+- 所有権: `/ksp_vessel/control/authority/{command,state}`
+- 入力: `/ksp_vessel/control/wrench_command` (`BodyWrenchCommand`)
+- 出力: `/ksp_vessel/control/wrench_feedback` (`WrenchFeedback`)
+- 出力: `/ksp_vessel/lifecycle` (`VesselLifecycle`)
 - 出力: `/ksp_vessel/ground_truth/pose` (`geometry_msgs/msg/PoseStamped`)
 - 出力: `/ksp_vessel/ground_truth/twist` (`geometry_msgs/msg/TwistStamped`)
+- 出力: `/ksp_vessel/ground_truth/twist_body` (`geometry_msgs/msg/TwistStamped`)
 - 出力: `/ksp_vessel/ground_truth/acceleration` (`geometry_msgs/msg/AccelStamped`)
 - 個別I/O: `/ksp_vessel/actuators/<type>/command`、`/ksp_vessel/actuators/<type>/state`（`id`で対象指定）
 
-`body_wrench`は`base_link`（+X前、+Y左、+Z上）で指定し、単位はN/N·mです。要求はKSP標準のホイール、主エンジン、RCSへ配分され、機体Rigidbodyへ直接Forceを加えません。接地状態、推力方向、CoMからのモーメント、推力上限、燃料切れを考慮し、実現できなかった残差は`/ros2_ksp/diagnostics`へ出します。指令は既定0.5秒でタイムアウトします。
+Wrenchは`base_link`（+X前、+Y左、+Z上）のN/N·mです。各RCSノズルの実噴射方向とCoMまでのモーメントアームからKSP操作channelを配分します。`requested / allocated / achieved / residual`をfeedbackするため、normalized inputで実現できなかった量をcontrollerから確認できます。
 
 ```bash
-ros2 topic pub -r 10 /ksp_vessel/body_wrench geometry_msgs/msg/WrenchStamped \
-  "{header: {frame_id: base_link}, wrench: {force: {x: 1000.0}, torque: {z: 100.0}}}"
+ros2 topic echo /ksp_vessel/lifecycle
+ros2 topic echo /ksp_vessel/control/authority/state
+ros2 topic echo /ksp_vessel/control/wrench_feedback
 ```
 
-Ground Truthは操作機体を選択した地点を原点とする東・北・上の`ground_truth_enu`です。KSPの浮動原点に依存せず、pose、速度、重力を含む運動学的加速度を30Hzで配信し、同時に`ground_truth_enu -> base_link`のTFを配信します。機体または天体が切り替わると原点と加速度微分履歴をリセットします。
+Ground Truthは操作機体を選択した地点を原点とする東・北・上の`ground_truth_enu`です。world/body両方のTwistを公開し、センサーと同じKSP universal timeへpose TFを整合させます。固定proxy jointとsensor mountは`/tf_static`です。
 
-ホイール、Engine、RCS、ROSモーター、デカプラー、手動展開式フェアリングには`wheel_<persistentId>_<moduleIndex>`のような名前が自動で付きます。個別commandは該当アクチュエータについてWrench配分より優先されます。分離機構は`SeparationCommand{separate: true}`で一度だけ作動し、`SeparationState`の最終状態をTransient Localで保持します。ドッキングポートには独立した状態・切離し・選択式RGBカメラAPIがあります。詳細は[デカプラー／フェアリング](docs/parts/separation.md)と[ドッキングポート](docs/parts/docking.md)を参照してください。
+ホイール、Engine、RCS、ROSモーター、デカプラー、手動展開式フェアリングの正式commandにも同じlease identityとsequenceが必要です。分離機構はownerだけが作動できます。詳細は[機体制御API](docs/api/vehicle-control.md)を参照してください。
 
 ## 2D LiDAR Mapping・Nav2
 
-`Ros2/ksp_nav2_bringup`はbridgeと分離した通常のROS2パッケージです。2D `LaserScan`だけからscan-to-scan ICP odometryを作り、SLAM Toolbox / AMCL / Nav2へ接続します。`ground_truth`は自己位置推定に使用しません。RViz2の`Nav2 Goal`から`NavigateToPose` Actionを送り、Nav2の`cmd_vel`を既存`body_wrench` APIへ閉ループ変換して機体を動かします。起動方法と制約は[2D LiDAR MappingとNav2](docs/guide/nav2.md)を参照してください。
+`Ros2/ksp_nav2_bringup`はbridgeと分離したROS2 integration packageです。2D `LaserScan`だけからscan-to-scan ICP odometryを作り、SLAM Toolbox / AMCL / Nav2へ接続します。planar controllerは`cmd_vel`が有効な間だけauthority leaseを取得し、停止後に解放します。起動方法と制約は[2D LiDAR MappingとNav2](docs/guide/nav2.md)を参照してください。
 
 ## ROS2モーター
 
@@ -219,11 +230,11 @@ ROS2ブリッジを起動すると、KSPは状態をUDP 49010へ送り、ブリ�
 
 主なTopic:
 
-- subscribe `/ksp_vessel/actuators/servo/trajectory`: `trajectory_msgs/msg/JointTrajectory`
+- legacy subscribe（既定無効） `/ksp_vessel/actuators/servo/trajectory`: `trajectory_msgs/msg/JointTrajectory`
 - publish `/ksp_vessel/joint_states`: `sensor_msgs/msg/JointState`
 - publish `/ros2_ksp/diagnostics`: `diagnostic_msgs/msg/DiagnosticArray`
 
-回転軸のposition/velocityはrad・rad/s、直動軸はm・m/sです。effortは回転軸がN·m、直動軸がNです。以下はサーボを90度へ0.5 rad/s、最大100 N·mで動かす例です。
+回転軸のposition/velocityはrad・rad/s、直動軸はm・m/sです。effortは回転軸がN·m、直動軸がNです。以下は`--enable-legacy-control`を付けた移行用の例です。新規コードではauthority付き`MotorCommand`を使います。
 
 ```bash
 ros2 topic pub --once /ksp_vessel/actuators/servo/trajectory trajectory_msgs/msg/JointTrajectory \
@@ -242,8 +253,8 @@ Flight中のactive vesselにあるすべての`ModuleEngines` / `ModuleEnginesFX
 
 - publish `/ksp_vessel/actuators/propulsion/state`: `ksp_ros2_interfaces/msg/EngineState`
 - subscribe `/ksp_vessel/actuators/propulsion/command`: `ksp_ros2_interfaces/msg/EngineCommand`
-- subscribe `/ksp_vessel/actuators/propulsion/main_throttle`: `std_msgs/msg/Float64`
-- subscribe `/ksp_vessel/actuators/rcs/twist_command`: `geometry_msgs/msg/Twist`
+- legacy subscribe（既定無効） `/ksp_vessel/actuators/propulsion/main_throttle`: `std_msgs/msg/Float64`
+- legacy subscribe（既定無効） `/ksp_vessel/actuators/rcs/twist_command`: `geometry_msgs/msg/Twist`
 
 `state`には1モジュール1メッセージのJSONが10 Hzで流れます。`name`は`engine_<partFlightId>_<moduleIndex>`または`rcs_<partFlightId>_<moduleIndex>`です。ほかに`enabled`、`throttleLimit`、現在推力`thrust`、定格推力`maxThrust`、`flameout`、ROS制御中かを示す`commandActive`などが含まれます。
 
@@ -251,7 +262,7 @@ Flight中のactive vesselにあるすべての`ModuleEngines` / `ModuleEnginesFX
 ros2 topic echo /ksp_vessel/actuators/propulsion/state
 ```
 
-個別エンジンを起動して65%へ設定する例です。推力指令には通信断フェイルセーフがあるため、噴射中は`-r 5`などで0.5秒より短い間隔で継続送信します。
+以下はbridgeへ`--enable-legacy-control`を付けた移行用APIの例です。所有権を調停できないため、新規コードではauthority付き`EngineCommand` / `RcsCommand`またはBody Wrenchを使ってください。legacy推力指令には通信断フェイルセーフがあるため、噴射中は`-r 5`などで0.5秒より短い間隔で継続送信します。
 
 ```bash
 ros2 topic pub -r 5 /ksp_vessel/actuators/propulsion/json_command std_msgs/msg/String \

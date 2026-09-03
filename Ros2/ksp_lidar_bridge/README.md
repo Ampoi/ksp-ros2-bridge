@@ -13,15 +13,19 @@ kRPCは使用しません。このbridgeはKerbalLiDAR KSPプラグインと直�
 - Bridge status: `/ros2_ksp/status`
 - Active vessel URDF: `/ksp_vessel/robot_description`
 - Active vessel root frame: `/ksp_vessel/root_frame`
-- Active vessel pose tree (`base_link` → proxy root → fixed joints): `/tf`
-- Motor trajectory: `/ksp_vessel/actuators/servo/trajectory` (`trajectory_msgs/msg/JointTrajectory`)
+- Active vessel dynamic pose (`ground_truth_enu` → `base_link` → proxy root): `/tf`
+- Proxy fixed joints and sensor mounts: `/tf_static`
+- Legacy motor trajectory (opt-in): `/ksp_vessel/actuators/servo/trajectory` (`trajectory_msgs/msg/JointTrajectory`)
 - Motor state: `/ksp_vessel/joint_states` (`sensor_msgs/msg/JointState`)
 - Motor diagnostics/current estimate: `/ros2_ksp/diagnostics` (`diagnostic_msgs/msg/DiagnosticArray`)
 - Typed actuators: `/ksp_vessel/actuators/<type>/{command,state}`（commandの`id`で対象指定）
-- Main throttle: `/ksp_vessel/actuators/propulsion/main_throttle` (`std_msgs/msg/Float64`)
-- RCS 6-axis command: `/ksp_vessel/actuators/rcs/twist_command` (`geometry_msgs/msg/Twist`)
-- Body wrench: `/ksp_vessel/body_wrench` (`geometry_msgs/msg/WrenchStamped`、`base_link`)
-- Ground truth: `/ksp_vessel/ground_truth/{pose,twist,acceleration}`
+- Legacy main throttle (opt-in): `/ksp_vessel/actuators/propulsion/main_throttle` (`std_msgs/msg/Float64`)
+- Legacy RCS 6-axis command (opt-in): `/ksp_vessel/actuators/rcs/twist_command` (`geometry_msgs/msg/Twist`)
+- Control authority: `/ksp_vessel/control/authority/{command,state}`
+- Body wrench: `/ksp_vessel/control/wrench_command` (`BodyWrenchCommand`、`base_link`)
+- Wrench feedback: `/ksp_vessel/control/wrench_feedback` (`WrenchFeedback`)
+- Vessel lifecycle: `/ksp_vessel/lifecycle` (`VesselLifecycle`)
+- Ground truth: `/ksp_vessel/ground_truth/{pose,twist,twist_body,acceleration}`
 - Separation actuators: `SeparationCommand/State` for stock decouplers and procedural fairings
 - Docking ports: `/ksp_vessel/docking_ports/<id>/{state,command}` (`DockingPortState/Command`)
 - Selected docking camera: `/ksp_vessel/docking_ports/<id>/camera/{image_raw,camera_info}`
@@ -80,28 +84,33 @@ ros2 topic echo /ksp_vessel/actuators/propulsion/state
 
 `<sensor_id>`はVAB/SPHのセンサーパーツ右クリックメニューにある`Edit ROS2 Sensor ID`で設定します。LiDARとRGBカメラだけが編集可能なIDを持ち、新規パーツには種類付き8桁UIDが自動設定されます。Topicルートを変更する場合は`--topic-prefix`を指定してください。
 
-## Vehicle wrench, ground truth, and typed actuators
+## Vehicle authority, wrench, ground truth, and typed actuators
 
-`/ksp_vessel/body_wrench`は`base_link`（+X前、+Y左、+Z上）のN/N·m要求です。KSPの剛体へ直接Forceを加えず、接地ホイール、作動中の主エンジン、RCSへ飽和付きで配分します。既定0.5秒でタイムアウトします。
+正式APIでは`/ksp_vessel/lifecycle`の実`vessel_id`へ期限付きleaseを取得してから、`/ksp_vessel/control/wrench_command`へ`BodyWrenchCommand`を送ります。KSPがowner、sequence、対象機体を検証し、lease期間中のSAS排他とemergency stopを管理します。
+
+Wrenchは`base_link`（+X前、+Y左、+Z上）のN/N·m要求です。各RCSノズルの位置、噴射方向、CoMからのモーメントアーム、axis enableを使ってKSP操作channelへ配分します。KSPの剛体へ直接Forceを加えません。
 
 ```bash
-ros2 topic pub -r 10 /ksp_vessel/body_wrench geometry_msgs/msg/WrenchStamped \
-  "{header: {frame_id: base_link}, wrench: {force: {x: 1000.0}, torque: {z: 100.0}}}"
+ros2 topic echo /ksp_vessel/lifecycle
+ros2 topic echo /ksp_vessel/control/authority/state
+ros2 topic echo /ksp_vessel/control/wrench_feedback
 ```
 
-Ground Truthは操作機体を選択した地点を原点とする`ground_truth_enu`で、pose、線形/角速度、運動学的な線形/角加速度を配信します。`ground_truth_enu`から`base_link`へのTFも同じtimestampで配信します。
+`WrenchFeedback`は`requested / allocated / achieved / residual`を公開します。`achieved`は直前のphysics tickで観測したengineとRCS推力からの再構成値で、reaction wheel・接触力・空力は含みません。KSP内の安全filterはforce/torque、角速度、変化率、連続噴射時間を制限します。
 
-Flight中に検出された各ホイール、Engine、RCS、ROSモーター、デカプラー、手動展開式フェアリングには、`persistentId`とmodule indexから安定した`<name>`が自動生成されます。分離機構は`SeparationCommand`の`separate: true`で作動し、`SeparationState`をReliable / Transient Localで保持します。ドッキングポートは専用の`DockingPortCommand/State` APIで状態、カメラ選択、Undock/Decoupleを扱います。`ModuleJettison`は分離APIの対象外です。それ以外の個別commandは該当アクチュエータについてbody Wrench配分より優先され、タイムアウト後に解除されます。
+Ground Truthは操作機体を選択した地点を原点とする`ground_truth_enu`で、pose、world/body frameの速度、運動学的加速度を配信します。`ground_truth_enu`から`base_link`へのTFもセンサーデータと同じKSP universal timeへ対応付けます。
+
+Flight中に検出された各ホイール、Engine、RCS、ROSモーター、デカプラー、手動展開式フェアリングには、`persistentId`とmodule indexから安定した`<name>`が自動生成されます。正式な型付きcommandにも同じauthority identityとsequenceが必要です。分離機構は`SeparationCommand`の`separate: true`で作動し、`SeparationState`をReliable / Transient Localで保持します。ドッキングポートは専用の`DockingPortCommand/State` APIで状態、カメラ選択、Undock/Decoupleを扱います。`ModuleJettison`は分離APIの対象外です。
 
 ## Active vessel runtime proxy
 
-URDFは`std_msgs/msg/String`をtransient-local QoSでpublishします。bridgeはKSPから受け取ったCoM基準のルートパーツ姿勢を使って`base_link`からプロキシrootへのTFを配信し、続けてURDFの固定ジョイントを`/tf`へ既定5Hzでpublishします。このためGround Truthの`ground_truth_enu -> base_link`から搭載センサーまでが1本のTFツリーになり、RViz2のRobotModelでも直接表示できます。操作機体の構成・相対姿勢が変わるとモデルは更新され、KSPからの再送が途絶えると自動的に期限切れになります。LiDARパケットの`partFlightId`がモデル内にある場合、対応linkの子にスキャン原点・姿勢を表すLiDAR frameを配信し、2D/3Dメッセージの`frame_id`をそのframeへ揃えます。
+URDFは`std_msgs/msg/String`をtransient-local QoSでpublishします。bridgeはKSPの永続的なvessel IDからproxy link名を作り、CoM基準の`base_link -> proxy root`だけをdynamic TFとして更新します。URDF固定jointとSensor ID由来の安定したmount frameは`/tf_static`です。このためGround Truthの`ground_truth_enu -> base_link`から搭載センサーまでが1本のTFツリーになります。操作機体の構成が変わった場合だけmodelを更新し、機体切替時は不一致modelを直ちに切断します。
 
 主なオプション:
 
 - `--robot-description-topic`: URDF Topic名
 - `--root-frame-topic`: RViz Fixed Frame確認用Topic名
-- `--model-tf-rate`: 固定ジョイントTFの更新Hz
+- `--model-tf-rate`: CoMからproxy rootへのdynamic TF更新Hz
 - `--allow-remote-models`: 非loopback送信元のモデルパケットを許可
 
 KSPからbridgeへのモデル経路は既定でfail-closedです。KSP側の`udpHost`はloopback、`allowRemoteUrdf`は`false`のまま利用してください。別ホストからモデルを受け取る場合だけ`--allow-remote-models`を指定します。ROS2 Topicの到達範囲は通常のDDS設定に従うため、同一ホストだけに制限する場合はbridgeとROS2 CLIを起動する全ターミナルで`ROS_LOCALHOST_ONLY=1`を設定してください。
@@ -110,7 +119,7 @@ KSPからbridgeへのモデル経路は既定でfail-closedです。KSP側の`ud
 
 ## Motor control
 
-サーボを90度へ動かす例（`servo_12345`は`/ksp_vessel/joint_states.name`で確認）:
+次は`--enable-legacy-control`を付けた移行用`JointTrajectory`例です（`servo_12345`は`/ksp_vessel/joint_states.name`で確認）。新規コードではauthority付き`MotorCommand`を使います。
 
 ```bash
 ros2 topic pub --once /ksp_vessel/actuators/servo/trajectory trajectory_msgs/msg/JointTrajectory \
@@ -123,7 +132,7 @@ ros2 topic pub --once /ksp_vessel/actuators/servo/trajectory trajectory_msgs/msg
 
 ## Propulsion control
 
-KSP側はactive vesselの標準`ModuleEngines` / `ModuleEnginesFX`と`ModuleRCS` / `ModuleRCSFX`を自動検出します。型付きcommandは`id`で対象を指定し、JSON APIでは複数モジュールを1回のcommandへまとめられます。
+KSP側はactive vesselの標準`ModuleEngines` / `ModuleEnginesFX`と`ModuleRCS` / `ModuleRCSFX`を自動検出します。型付きcommandは`id`で対象を指定します。以下のJSON / Float64 / Twist例は`--enable-legacy-control`を付けた移行用途だけで、新規コードではauthority付きの型付きcommandまたはBody Wrenchを使います。
 
 ```bash
 ros2 topic pub -r 5 /ksp_vessel/actuators/propulsion/json_command std_msgs/msg/String \

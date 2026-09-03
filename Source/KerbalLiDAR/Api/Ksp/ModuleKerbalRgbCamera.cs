@@ -111,6 +111,11 @@ namespace KerbalLiDAR
             {
                 return;
             }
+            if (vessel == null || FlightGlobals.ActiveVessel != vessel)
+            {
+                SendInactive();
+                return;
+            }
 
             var now = Time.realtimeSinceStartup;
             if (now < nextFrameTime)
@@ -125,7 +130,8 @@ namespace KerbalLiDAR
         [KSPEvent(guiActive = true, guiName = "Capture RGB Frame Now", active = true)]
         public void CaptureNow()
         {
-            if (HighLogic.LoadedSceneIsFlight && udpEnabled)
+            if (HighLogic.LoadedSceneIsFlight && udpEnabled &&
+                vessel != null && FlightGlobals.ActiveVessel == vessel)
             {
                 CaptureAndSend();
             }

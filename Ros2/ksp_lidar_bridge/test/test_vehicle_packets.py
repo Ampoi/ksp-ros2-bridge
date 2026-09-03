@@ -6,6 +6,7 @@ from ksp_lidar_bridge.vehicle_packets import (
     actuator_names_to_remove,
     actuator_state_from_packet,
     body_wrench_command,
+    control_authority_command,
     ground_truth_from_packet,
 )
 
@@ -22,6 +23,8 @@ class GroundTruthPacketTests(unittest.TestCase):
                 "rotation": [0, 0, 0, 2],
                 "linearVelocity": [4, 5, 6],
                 "angularVelocity": [0.1, 0.2, 0.3],
+                "linearVelocityBody": [6, 5, 4],
+                "angularVelocityBody": [0.3, 0.2, 0.1],
                 "linearAcceleration": [0, 0, -9.81],
                 "angularAcceleration": [0, 0, 0],
             }
@@ -29,6 +32,8 @@ class GroundTruthPacketTests(unittest.TestCase):
         self.assertEqual(state.position, (1.0, 2.0, 3.0))
         self.assertEqual(state.rotation, (0.0, 0.0, 0.0, 1.0))
         self.assertEqual(state.origin_sequence, 2)
+        self.assertEqual(state.linear_velocity_body, (6.0, 5.0, 4.0))
+        self.assertEqual(state.angular_velocity_body, (0.3, 0.2, 0.1))
 
     def test_rejects_nonfinite_ground_truth(self):
         packet = {
@@ -43,15 +48,28 @@ class GroundTruthPacketTests(unittest.TestCase):
 
 class VehicleCommandTests(unittest.TestCase):
     def test_builds_body_wrench(self):
-        command = body_wrench_command((1, 2, 3), (4, 5, 6), 7, 0.5)
+        command = body_wrench_command(
+            (1, 2, 3), (4, 5, 6), 7, 0.5, "vessel", "controller", "lease"
+        )
         self.assertEqual(command["frame"], "base_link")
         self.assertEqual(command["force"], [1, 2, 3])
+        self.assertEqual(command["version"], 2)
+        self.assertEqual(command["vesselId"], "vessel")
+
+    def test_builds_control_authority_command(self):
+        command = control_authority_command(
+            "acquire", "vessel", "controller", "lease", 100, 2.0, True, 8
+        )
+        self.assertEqual(command["action"], "acquire")
+        self.assertEqual(command["priority"], 100)
+        self.assertTrue(command["suppressSas"])
 
     def test_builds_typed_actuator_command(self):
         command = actuator_command(
             "wheel", "Wheel #1",
             {"enabled": True, "targetAngularVelocity": 2.0, "timeoutSeconds": 0.4},
             3,
+            "vessel", "controller", "lease",
         )
         self.assertEqual(command["name"], "wheel_1")
         self.assertEqual(command["targetAngularVelocity"], 2.0)
@@ -114,7 +132,8 @@ class VehicleCommandTests(unittest.TestCase):
 
     def test_builds_separation_command(self):
         command = actuator_command(
-            "separation", "Decoupler #1", {"separate": True}, 9
+            "separation", "Decoupler #1", {"separate": True}, 9,
+            "vessel", "controller", "lease"
         )
         self.assertEqual(command["actuatorType"], "separation")
         self.assertEqual(command["name"], "decoupler_1")
@@ -122,7 +141,8 @@ class VehicleCommandTests(unittest.TestCase):
 
     def test_preserves_false_separation_command_as_no_op(self):
         command = actuator_command(
-            "separation", "fairing_12_0", {"separate": False}, 10
+            "separation", "fairing_12_0", {"separate": False}, 10,
+            "vessel", "controller", "lease"
         )
         self.assertIs(command["separate"], False)
 

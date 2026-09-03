@@ -1,29 +1,56 @@
-"""ROS2 adapter from Nav2 planar velocity commands to KSP body wrench."""
+"""Lease-aware ROS2 adapter from Nav2 velocity commands to vessel control."""
 
 import math
 from typing import Optional
 
-from geometry_msgs.msg import Twist, WrenchStamped
+from geometry_msgs.msg import Twist
+from ksp_ros2_interfaces.msg import (
+    BodyWrenchCommand,
+    ControlAuthorityCommand,
+    ControlAuthorityState,
+    VesselLifecycle,
+)
+from ksp_vehicle_control.application.lease import LeaseAction, LeaseCoordinator
 from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.duration import Duration
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import (
+    DurabilityPolicy,
+    QoSProfile,
+    ReliabilityPolicy,
+    qos_profile_sensor_data,
+)
 from rclpy.time import Time
 
 from .math_utils import planar_wrench, rotate_planar
 
 
 class PlanarWrenchController(Node):
-    """Track Nav2 planar velocity commands through the bridge body-wrench API."""
+    """Track Nav2 velocity commands while exclusively owning one vessel lease."""
 
     def __init__(self) -> None:
         """Create controller parameters, ROS interfaces, and the control timer."""
         super().__init__("ksp_planar_wrench_controller")
         self.declare_parameter("cmd_vel_topic", "/cmd_vel")
         self.declare_parameter("odom_topic", "/ksp_nav2/odom")
-        self.declare_parameter("body_wrench_topic", "/ksp_vessel/body_wrench")
+        self.declare_parameter(
+            "wrench_command_topic", "/ksp_vessel/control/wrench_command"
+        )
+        self.declare_parameter(
+            "authority_command_topic", "/ksp_vessel/control/authority/command"
+        )
+        self.declare_parameter(
+            "authority_state_topic", "/ksp_vessel/control/authority/state"
+        )
+        self.declare_parameter("vessel_lifecycle_topic", "/ksp_vessel/lifecycle")
+        self.declare_parameter("controller_id", "nav2_planar_controller")
+        self.declare_parameter("control_priority", 80)
+        self.declare_parameter("lease_duration_sec", 2.0)
+        self.declare_parameter("lease_renew_period_sec", 0.5)
+        self.declare_parameter("suppress_sas", True)
+        self.declare_parameter("wrench_timeout_sec", 0.25)
         self.declare_parameter("odom_base_frame", "nav_base_link")
         self.declare_parameter("wrench_frame", "base_link")
         self.declare_parameter("nav_to_body_yaw", 0.0)
@@ -52,6 +79,22 @@ class PlanarWrenchController(Node):
         self.brake_duration = Duration(
             seconds=float(self.get_parameter("brake_duration").value)
         )
+        self.release_timeout = Duration(
+            nanoseconds=self.command_timeout.nanoseconds + self.brake_duration.nanoseconds
+        )
+        self.control_priority = int(self.get_parameter("control_priority").value)
+        self.lease_duration_sec = float(
+            self.get_parameter("lease_duration_sec").value
+        )
+        self.suppress_sas = bool(self.get_parameter("suppress_sas").value)
+        self.wrench_timeout_sec = float(
+            self.get_parameter("wrench_timeout_sec").value
+        )
+        self.sequence = 0
+        self.lease = LeaseCoordinator(
+            str(self.get_parameter("controller_id").value),
+            float(self.get_parameter("lease_renew_period_sec").value),
+        )
         rate = max(1.0, float(self.get_parameter("control_rate").value))
 
         self.target = (0.0, 0.0, 0.0)
@@ -59,8 +102,20 @@ class PlanarWrenchController(Node):
         self.last_command: Optional[Time] = None
         self.last_odometry: Optional[Time] = None
 
+        command_qos = QoSProfile(depth=10)
+        command_qos.reliability = ReliabilityPolicy.RELIABLE
+        state_qos = QoSProfile(depth=1)
+        state_qos.reliability = ReliabilityPolicy.RELIABLE
+        state_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
         self.publisher = self.create_publisher(
-            WrenchStamped, str(self.get_parameter("body_wrench_topic").value), 10
+            BodyWrenchCommand,
+            str(self.get_parameter("wrench_command_topic").value),
+            command_qos,
+        )
+        self.authority_publisher = self.create_publisher(
+            ControlAuthorityCommand,
+            str(self.get_parameter("authority_command_topic").value),
+            command_qos,
         )
         self.command_subscription = self.create_subscription(
             Twist,
@@ -74,7 +129,36 @@ class PlanarWrenchController(Node):
             self.receive_odometry,
             qos_profile_sensor_data,
         )
+        self.create_subscription(
+            ControlAuthorityState,
+            str(self.get_parameter("authority_state_topic").value),
+            self.receive_authority,
+            state_qos,
+        )
+        self.create_subscription(
+            VesselLifecycle,
+            str(self.get_parameter("vessel_lifecycle_topic").value),
+            self.receive_lifecycle,
+            state_qos,
+        )
         self.timer = self.create_timer(1.0 / rate, self.control)
+
+    def receive_lifecycle(self, message: VesselLifecycle) -> None:
+        """Bind future commands to the bridge's concrete active-vessel identity."""
+        active = message.state in (
+            VesselLifecycle.STATE_ACTIVE,
+            VesselLifecycle.STATE_CHANGED,
+        )
+        self.lease.observe_vessel(message.vessel_id, active)
+
+    def receive_authority(self, message: ControlAuthorityState) -> None:
+        """Accept ownership only after the KSP-side authority aggregate confirms it."""
+        self.lease.observe_authority(
+            message.vessel_id,
+            message.controller_id,
+            message.lease_id,
+            message.state == ControlAuthorityState.STATE_OWNED,
+        )
 
     def receive_command(self, message: Twist) -> None:
         """Store the latest finite Nav2 velocity target."""
@@ -107,14 +191,20 @@ class PlanarWrenchController(Node):
 
     def control(self) -> None:
         """Publish bounded wrench feedback while command and odometry are fresh."""
-        if self.last_command is None or self.last_odometry is None:
+        if self.last_command is None:
             return
         now = self.get_clock().now()
-        odom_age = now - self.last_odometry
         command_age = now - self.last_command
-        if odom_age > self.odom_timeout:
+        if command_age > self.release_timeout:
+            self._release_authority(now)
             return
-        if command_age > self.command_timeout + self.brake_duration:
+        if self.last_odometry is None or now - self.last_odometry > self.odom_timeout:
+            if self.lease.owned:
+                self._publish_wrench(now, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+                self._release_authority(now)
+            return
+        self._maintain_authority(now)
+        if not self.lease.owned:
             return
 
         target = self.target if command_age <= self.command_timeout else (0.0, 0.0, 0.0)
@@ -127,12 +217,54 @@ class PlanarWrenchController(Node):
             self.max_torque,
         )
         force = rotate_planar(force, self.nav_to_body_yaw)
-        message = WrenchStamped()
+        self._publish_wrench(now, force, torque)
+
+    def _maintain_authority(self, now: Time) -> None:
+        action = self.lease.due_action(now.nanoseconds * 1.0e-9)
+        if action is not None:
+            self._publish_authority(action, now)
+
+    def _release_authority(self, now: Time) -> None:
+        action = self.lease.release_action()
+        if action is not None:
+            self._publish_authority(action, now)
+
+    def _publish_authority(self, action: LeaseAction, now: Time) -> None:
+        self.sequence += 1
+        message = ControlAuthorityCommand()
+        message.header.stamp = now.to_msg()
+        message.action = {
+            "acquire": ControlAuthorityCommand.ACTION_ACQUIRE,
+            "renew": ControlAuthorityCommand.ACTION_RENEW,
+            "release": ControlAuthorityCommand.ACTION_RELEASE,
+        }[action.action]
+        message.vessel_id = action.vessel_id
+        message.controller_id = action.controller_id
+        message.lease_id = action.lease_id
+        message.priority = self.control_priority
+        message.lease_duration_sec = self.lease_duration_sec
+        message.suppress_sas = self.suppress_sas
+        message.sequence = self.sequence
+        self.authority_publisher.publish(message)
+
+    def _publish_wrench(self, now: Time, force, torque) -> None:
+        self.sequence += 1
+        message = BodyWrenchCommand()
         message.header.stamp = now.to_msg()
         message.header.frame_id = self.wrench_frame
+        message.vessel_id = self.lease.vessel_id
+        message.controller_id = self.lease.controller_id
+        message.lease_id = self.lease.lease_id
+        message.sequence = self.sequence
         message.wrench.force.x, message.wrench.force.y, message.wrench.force.z = force
         message.wrench.torque.x, message.wrench.torque.y, message.wrench.torque.z = torque
+        message.timeout_sec = self.wrench_timeout_sec
         self.publisher.publish(message)
+
+    def destroy_node(self) -> bool:
+        if rclpy.ok():
+            self._release_authority(self.get_clock().now())
+        return super().destroy_node()
 
 
 def main(args=None) -> None:

@@ -47,6 +47,7 @@ class JointTransform:
 @dataclass(frozen=True)
 class VesselProxyModel:
     session_id: str
+    vessel_id: str
     model_id: str
     urdf: str
     root_frame: str
@@ -216,7 +217,10 @@ def _model_from_bundle(
     if hashlib.sha256(urdf.encode("utf-8")).hexdigest() != expected_model_id:
         raise ValueError("active vessel URDF model hash mismatch")
 
-    name_prefix = "ksp_" + expected_session_id[:8]
+    vessel_id = _strict_string(bundle.get("vesselId", expected_session_id), "vesselId")
+    if not _SESSION_ID.fullmatch(vessel_id):
+        raise ValueError("invalid active vessel ID")
+    name_prefix = "ksp_" + vessel_id[:8]
     root_frame, link_names, transforms = _parse_proxy_urdf(urdf, name_prefix)
     if bundle.get("rootFrame") != root_frame:
         raise ValueError("active vessel URDF root frame mismatch")
@@ -264,6 +268,7 @@ def _model_from_bundle(
 
     return VesselProxyModel(
         session_id=expected_session_id,
+        vessel_id=vessel_id,
         model_id=expected_model_id,
         urdf=urdf,
         root_frame=root_frame,

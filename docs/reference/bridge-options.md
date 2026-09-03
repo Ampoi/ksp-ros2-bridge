@@ -37,7 +37,7 @@ ros2 run ksp_lidar_bridge udp_bridge --host 127.0.0.1 --port 49010
 |---|---|---|
 | `--robot-description-topic` | `/ksp_vessel/robot_description` | URDF Topic |
 | `--root-frame-topic` | `/ksp_vessel/root_frame` | root frame Topic |
-| `--model-tf-rate` | `5.0` | 固定joint TFのpublish Hz。内部で0.5〜60 Hzへclamp |
+| `--model-tf-rate` | `5.0` | CoMからproxy rootへのdynamic TF更新Hz。固定jointは`/tf_static` |
 | `--allow-remote-models` | 無効 | 非loopbackからのモデルパケットを許可 |
 
 ## モーターTopic
@@ -64,12 +64,18 @@ ros2 run ksp_lidar_bridge udp_bridge --host 127.0.0.1 --port 49010
 
 | 引数 | 既定値 | 内容 |
 |---|---|---|
-| `--body-wrench-topic` | `/ksp_vessel/body_wrench` | 機体Wrench入力Topic |
+| `--body-wrench-command-topic` | `/ksp_vessel/control/wrench_command` | lease-bound Wrench入力 |
+| `--control-authority-command-topic` | `/ksp_vessel/control/authority/command` | lease・e-stop入力 |
+| `--control-authority-state-topic` | `/ksp_vessel/control/authority/state` | KSP authority状態 |
+| `--wrench-feedback-topic` | `/ksp_vessel/control/wrench_feedback` | Wrench実現状態 |
+| `--vessel-lifecycle-topic` | `/ksp_vessel/lifecycle` | active vessel lifecycle |
+| `--body-wrench-topic` | 空 | 非推奨`WrenchStamped`互換入力。空なら無効 |
+| `--enable-legacy-control` | false | 所有権なしのJointTrajectory / Float64 / Twist / JSON入力を有効化 |
 | `--ground-truth-prefix` | `/ksp_vessel/ground_truth` | pose / twist / accelerationのprefix |
 | `--actuators-prefix` | `/ksp_vessel/actuators` | 種類別の型付きアクチュエータTopicのprefix |
 | `--vehicle-command-timeout-sec` | `0.5` | Body Wrenchと型付きcommandの既定timeout |
 
-`--vehicle-command-timeout-sec`は有限の正数のみ受け付けます。ホイール、Engine、RCS、モーターの型付きcommandで`timeout_sec`に0以外を指定すると、その値を優先します。KSP側では0.05〜10秒へclampされます。不可逆な`SeparationCommand`にはtimeoutはありません。
+`--vehicle-command-timeout-sec`は有限の正数のみ受け付けます。ホイール、Engine、RCS、モーターの型付きcommandで`timeout_sec`に0以外を指定すると、その値を優先します。KSP側では0.05〜10秒へclampされます。型付きcommandは不可逆な`SeparationCommand`を含めauthority leaseが必須です。
 
 ## すべてを独自namespaceへ移す例
 
@@ -85,7 +91,11 @@ ros2 run ksp_lidar_bridge udp_bridge \
   --propulsion-state-topic /my_rover/actuators/propulsion/json_state \
   --main-throttle-topic /my_rover/actuators/propulsion/main_throttle \
   --rcs-command-topic /my_rover/actuators/rcs/twist_command \
-  --body-wrench-topic /my_rover/body_wrench \
+  --body-wrench-command-topic /my_rover/control/wrench_command \
+  --control-authority-command-topic /my_rover/control/authority/command \
+  --control-authority-state-topic /my_rover/control/authority/state \
+  --wrench-feedback-topic /my_rover/control/wrench_feedback \
+  --vessel-lifecycle-topic /my_rover/lifecycle \
   --ground-truth-prefix /my_rover/ground_truth \
   --actuators-prefix /my_rover/actuators \
   --docking-ports-prefix /my_rover/docking_ports \

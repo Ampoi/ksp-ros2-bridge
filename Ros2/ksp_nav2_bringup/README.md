@@ -11,8 +11,8 @@ KSPの2D LiDARを使って、LiDAR odometry、SLAM Toolbox、Nav2、RViz2を接�
   -> SLAM Toolbox (mapping) または AMCL (保存地図でのlocalization)
   -> Nav2
   -> /cmd_vel
-  -> planar velocity controller
-  -> /ksp_vessel/body_wrench
+  -> lease-aware planar velocity controller
+  -> /ksp_vessel/control/wrench_command
   -> ksp_lidar_bridge
 ```
 
@@ -60,6 +60,8 @@ RViz2の`2D Pose Estimate`で初期位置を与えてから`Nav2 Goal`を指定�
 - `robot_radius`: 機体の平面半径。既定1.0 m。
 - `linear_gain` / `angular_gain`: 速度誤差からN / N·mへの変換係数。
 - `max_planar_force` / `max_yaw_torque`: bridgeへ要求する上限。
+- `controller_id` / `control_priority`: authorityで識別・調停するcontroller。
+- `lease_duration_sec` / `lease_renew_period_sec`: 制御leaseの期限と更新周期。
 - `nav_to_body_yaw`: LiDARの+Xと機体`base_link`の+Xがずれる場合のyaw補正[rad]。
 - DWBの`max_vel_*`と`acc_lim_*`: 機体が安定して追従できる速度・加速度。
 - ICPの`max_correspondence_distance`: 1スキャン間の最大移動量と環境寸法に合わせる値。
@@ -70,7 +72,9 @@ RViz2の`2D Pose Estimate`で初期位置を与えてから`Nav2 Goal`を指定�
 ## 安全と制約
 
 - Nav2とこのcontrollerは2D専用です。高度、roll、pitchは制御しません。
-- `/cmd_vel`を受け取るまで`/ksp_vessel/body_wrench`はpublishしません。
-- commandまたはLiDAR odometryが途切れると制御出力を停止し、bridge側のtimeoutでROS overrideを解放します。
+- `/cmd_vel`を受け取るまでauthority leaseを取得せず、Wrenchもpublishしません。
+- 有効な`cmd_vel`中だけlifecycleの実`vessel_id`へleaseを取得します。command停止後は明示的にreleaseします。
+- LiDAR odometryが途切れるとゼロWrenchへ移り、KSP側のtimeoutも最終停止境界になります。
+- SAS排他、角速度・変化率・連続噴射limit、emergency stopはKSP内の正式APIが適用します。
 - scan-to-scan推定なので、特徴の乏しい場所、大部分が動く物体、スキャン周期に対して大きすぎる移動ではodometryが失敗します。
 - 最初は低い力・トルク上限で、広い場所から調整してください。

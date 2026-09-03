@@ -29,16 +29,18 @@ ros2 topic echo /ksp_vessel/actuators/separation/state
 
 ## 切断・展開指令
 
-`separate: true`を1回publishすると、KSP標準の切断またはフェアリング展開処理を実行します。操作は不可逆です。`false`、既に作動済みの対象、利用不能な対象、存在しない名前への指令は無視されます。
+`separate: true`を1回publishすると、KSP標準の切断またはフェアリング展開処理を実行します。操作は不可逆なので、実`vessel_id`に対する取得済みauthority leaseと単調増加`sequence`が必須です。owner以外、`false`、作動済み、利用不能、存在しない名前への指令は拒否または無視されます。
 
 ```bash
 ros2 topic pub --once /ksp_vessel/actuators/separation/command \
-  ksp_ros2_interfaces/msg/SeparationCommand '{id: decoupler_12345_0, separate: true}'
+  ksp_ros2_interfaces/msg/SeparationCommand \
+  '{vessel_id: <vessel-id>, controller_id: manual, lease_id: <lease-id>, sequence: 2, id: decoupler_12345_0, separate: true}'
 ```
 
 ```bash
 ros2 topic pub --once /ksp_vessel/actuators/separation/command \
-  ksp_ros2_interfaces/msg/SeparationCommand '{id: fairing_67890_1, separate: true}'
+  ksp_ros2_interfaces/msg/SeparationCommand \
+  '{vessel_id: <vessel-id>, controller_id: manual, lease_id: <lease-id>, sequence: 3, id: fairing_67890_1, separate: true}'
 ```
 
-対象機構は常にROS2指令を受け付けます。KSP内に許可スイッチはありません。
+identityは先に[機体制御API](/api/vehicle-control)で取得したleaseへ置き換えてください。lease外から不可逆操作を行う互換経路はありません。

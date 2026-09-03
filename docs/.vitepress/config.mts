@@ -28,6 +28,7 @@ export default defineConfig({
         text: 'はじめに',
         items: [
           { text: 'システム概要', link: '/guide/overview' },
+          { text: 'モノレポ設計', link: '/guide/architecture' },
           { text: '起動手順', link: '/guide/getting-started' },
           { text: '2D LiDAR MappingとNav2', link: '/guide/nav2' }
         ]

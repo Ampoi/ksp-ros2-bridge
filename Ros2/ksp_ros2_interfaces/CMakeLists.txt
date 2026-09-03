@@ -20,6 +20,11 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/SeparationCommand.msg"
   "msg/SeparationState.msg"
   "msg/ControlSetpoint.msg"
+  "msg/BodyWrenchCommand.msg"
+  "msg/ControlAuthorityCommand.msg"
+  "msg/ControlAuthorityState.msg"
+  "msg/WrenchFeedback.msg"
+  "msg/VesselLifecycle.msg"
   DEPENDENCIES std_msgs geometry_msgs
 )
 

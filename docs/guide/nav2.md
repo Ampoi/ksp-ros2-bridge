@@ -10,7 +10,7 @@
 | Mapping | `/ksp_nav2/scan` + LiDAR odometry → `/map` | SLAM Toolboxによる地図生成とloop closure |
 | Localization | 保存地図 + `/ksp_nav2/scan` → `map -> lidar_odom` | AMCLによる自己位置推定 |
 | Navigation | map / costmap / odometry → `/cmd_vel` | Nav2の経路計画と追従 |
-| KSP制御 | `/cmd_vel` → `/ksp_vessel/body_wrench` | 平面速度誤差をforce / yaw torqueへ変換 |
+| KSP制御 | `/cmd_vel` → authority lease → `/control/wrench_command` | 平面速度誤差をforce / yaw torqueへ変換 |
 
 Nav2のTFは`map -> lidar_odom -> nav_base_link`です。bridgeのGround Truth TopicとTFは購読しないため、自己位置推定へ真値は混ざりません。
 
@@ -48,6 +48,8 @@ ros2 launch ksp_nav2_bringup navigation.launch.py \
 
 ## 機体別の調整
 
-設定は`ksp_nav2_bringup/params/nav2_params.yaml`にまとまっています。機体寸法に合わせて`robot_radius`、推進力に合わせてcontrollerのgainとforce / torque上限、運動性能に合わせてDWBの速度・加速度上限を調整します。
+設定は`ksp_nav2_bringup/params/nav2_params.yaml`にまとまっています。機体寸法に合わせて`robot_radius`、推進力に合わせてcontrollerのgainとforce / torque上限、運動性能に合わせてDWBの速度・加速度上限を調整します。`controller_id`と`control_priority`は他controllerとの調停、`lease_duration_sec`と`lease_renew_period_sec`は通信断時の所有権解放を決めます。
 
 LiDARの+Xが機体`base_link`の+Xと異なる場合、`nav_to_body_yaw`へLiDAR座標から機体座標へのyaw回転[rad]を設定します。Nav2は2DなのでLiDARは水平固定が前提で、高度・roll・pitchは別の飛行制御系が担当します。
+
+planar controllerは`cmd_vel`が有効な間だけ`/ksp_vessel/lifecycle`で示された実`vessel_id`へleaseを取得し、停止後にreleaseします。mapping起動だけでは機体を占有しません。SAS排他とKSP側安全limitは同じ正式制御APIが適用されます。

@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <package format="3">
   <name>ksp_ros2_interfaces</name>
-  <version>0.1.0</version>
-  <description>Typed ROS 2 actuator commands and states for the KSP ROS2 bridge.</description>
+  <version>0.2.0</version>
+  <description>Typed ROS 2 control, lifecycle, actuator command, and feedback contracts for KSP.</description>
   <maintainer email="user@example.com">Kerbal LiDAR Lab</maintainer>
   <license>MIT</license>
 

@@ -14,8 +14,8 @@
 
 1. KSPプラグインDLLをReleaseビルド
 2. `GameData/KerbalLiDAR`をKSPの`GameData`へ同期
-3. `Ros2/ksp_ros2_interfaces`、`Ros2/ksp_lidar_bridge`、`Ros2/ksp_nav2_bringup`をROS2 workspaceの`src`へ同期
-4. bridgeとNav2連携パッケージを`colcon build`でビルド
+3. `Ros2`のinterfaces、bridge、共通機体制御、Nav2 packageと`Demo`をROS2 workspaceへ同期
+4. 同期したROS2 packageを依存順に`colcon build`
 
 既定パスと異なる場合は環境変数で指定します。
 
@@ -33,11 +33,12 @@ ROS_SETUP="/opt/ros/jazzy/setup.bash" \
 mkdir -p ~/ros2_ws/src
 cp -r Ros2/ksp_ros2_interfaces ~/ros2_ws/src/
 cp -r Ros2/ksp_lidar_bridge ~/ros2_ws/src/
+cp -r Ros2/ksp_vehicle_control ~/ros2_ws/src/
 cp -r Ros2/ksp_nav2_bringup ~/ros2_ws/src/
 cd ~/ros2_ws
 source /opt/ros/jazzy/setup.bash
 rosdep install --from-paths src --ignore-src --rosdistro jazzy -y
-colcon build --packages-up-to ksp_lidar_bridge ksp_nav2_bringup
+colcon build --packages-up-to ksp_lidar_bridge ksp_vehicle_control ksp_nav2_bringup
 ```
 :::
 
@@ -92,6 +93,8 @@ ros2 topic echo /ksp_vessel/joint_states
 ros2 topic echo /ksp_vessel/lidar_2d/front_lidar/scan
 ros2 topic hz /ksp_vessel/camera/rgb_camera/image_raw
 ros2 topic echo /ksp_vessel/ground_truth/pose
+ros2 topic echo --once /ksp_vessel/lifecycle
+ros2 topic echo /ksp_vessel/control/authority/state
 ros2 topic list | grep '^/ksp_vessel/actuators/'
 ```
 

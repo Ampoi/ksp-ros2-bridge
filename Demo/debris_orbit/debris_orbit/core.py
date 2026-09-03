@@ -16,13 +16,12 @@ Quaternion = Tuple[float, float, float, float]
 
 
 class VesselTopics(NamedTuple):
-    """Topic names from the current ROS2 for KSP active-vessel contract."""
+    """Topic names used by this demo and the active-vessel read model."""
 
     lidar_points: str
     camera_image: str
     ground_truth_pose: str
     ground_truth_twist: str
-    body_wrench: str
     control_setpoint: str
     controller_status: str
     demo_status: str
@@ -40,23 +39,26 @@ def sanitize_ros_component(value: str, fallback: str) -> str:
 
 
 def vessel_topics(
-    prefix: str, lidar_sensor_id: str, camera_sensor_id: str, platform_id: str
+    prefix: str, lidar_sensor_id: str, camera_sensor_id: str, demo_instance_id: str
 ) -> VesselTopics:
-    """Resolve all default Topic names for the `/ksp_vessel` API."""
+    """Resolve sensor inputs and demo-owned output topics.
+
+    ``demo_instance_id`` is only a ROS namespace token.  It never selects a KSP
+    vessel; control adapters bind commands to lifecycle ``vessel_id`` values.
+    """
     root_value = str(prefix or "").strip("/")
     root = f"/{root_value}" if root_value else ""
     lidar_id = sanitize_ros_component(lidar_sensor_id, "lidar_3d")
     camera_id = sanitize_ros_component(camera_sensor_id, "camera")
-    platform = sanitize_ros_component(platform_id, "demo_vehicle")
+    instance = sanitize_ros_component(demo_instance_id, "demo_vehicle")
     return VesselTopics(
         lidar_points=f"{root}/lidar_3d/{lidar_id}/points",
         camera_image=f"{root}/camera/{camera_id}/image_raw",
         ground_truth_pose=f"{root}/ground_truth/pose",
         ground_truth_twist=f"{root}/ground_truth/twist",
-        body_wrench=f"{root}/body_wrench",
-        control_setpoint=f"{root}/demos/debris_orbit/{platform}/setpoint",
-        controller_status=f"{root}/demos/debris_orbit/{platform}/controller_status",
-        demo_status=f"{root}/demos/debris_orbit/{platform}/status",
+        control_setpoint=f"{root}/demos/debris_orbit/{instance}/setpoint",
+        controller_status=f"{root}/demos/debris_orbit/{instance}/controller_status",
+        demo_status=f"{root}/demos/debris_orbit/{instance}/status",
     )
 
 
@@ -225,6 +227,31 @@ def body_orientation_for_sensor_look_at(
     return quaternion_normalize(
         quaternion_multiply(sensor_world, quaternion_conjugate(sensor_in_body))
     )
+
+
+def quaternion_between_vectors(source: Vector3, target: Vector3) -> Quaternion:
+    """Return the shortest rotation that moves one direction onto another."""
+    source_unit = normalize(source, (1.0, 0.0, 0.0))
+    target_unit = normalize(target, source_unit)
+    cosine = max(-1.0, min(1.0, dot(source_unit, target_unit)))
+    if cosine < -1.0 + 1.0e-8:
+        helper = (1.0, 0.0, 0.0) if abs(source_unit[0]) < 0.9 else (0.0, 1.0, 0.0)
+        axis = normalize(cross(source_unit, helper), (0.0, 0.0, 1.0))
+        return (axis[0], axis[1], axis[2], 0.0)
+    axis = cross(source_unit, target_unit)
+    return quaternion_normalize((axis[0], axis[1], axis[2], 1.0 + cosine))
+
+
+def body_orientation_for_sensor_direction(
+    current_body_world: Quaternion,
+    sensor_in_body: Quaternion,
+    forward_world: Vector3,
+) -> Quaternion:
+    """Aim sensor +X using the minimum rotation, preserving line-of-sight roll."""
+    sensor_world = quaternion_multiply(current_body_world, sensor_in_body)
+    current_forward = rotate_vector(sensor_world, (1.0, 0.0, 0.0))
+    correction = quaternion_between_vectors(current_forward, forward_world)
+    return quaternion_normalize(quaternion_multiply(correction, current_body_world))
 
 
 def search_direction(
