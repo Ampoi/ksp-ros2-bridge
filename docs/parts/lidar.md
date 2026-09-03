@@ -6,8 +6,8 @@
 
 | パーツ | 入力Topic | 出力Topic | 型 |
 |---|---|---|---|
-| Kerbal LiDAR 2D | なし | `/ros2_ksp/<part_name>/lidar/scan` | `sensor_msgs/msg/LaserScan` |
-| Kerbal LiDAR 3D | なし | `/ros2_ksp/<part_name>/lidar/points` | `sensor_msgs/msg/PointCloud2` |
+| Kerbal LiDAR 2D | なし | `/ksp_vessel/lidar_2d/<lidar_2d_id>/scan` | `sensor_msgs/msg/LaserScan` |
+| Kerbal LiDAR 3D | なし | `/ksp_vessel/lidar_3d/<lidar_3d_id>/points` | `sensor_msgs/msg/PointCloud2` |
 
 ## 2D LaserScan
 
@@ -19,7 +19,7 @@
 - `intensities`は空配列です。
 
 ```bash
-ros2 topic echo /ros2_ksp/front_lidar/lidar/scan
+ros2 topic echo /ksp_vessel/lidar_2d/front_lidar/scan
 ```
 
 ## 3D PointCloud2
@@ -31,7 +31,7 @@ ros2 topic echo /ros2_ksp/front_lidar/lidar/scan
 - 現行の3DパーツはFibonacci半球配置を使います。KSPはrangeだけを送り、bridgeが既知の方向列を復元して点へ変換します。
 
 ```bash
-ros2 topic echo --once /ros2_ksp/roof_lidar/lidar/points
+ros2 topic echo --once /ksp_vessel/lidar_3d/roof_lidar/points
 ```
 
 ## 既定設定
@@ -57,12 +57,14 @@ ros2 topic echo --once /ros2_ksp/roof_lidar/lidar/points
 
 `lidarEnabled`と`udpEnabled`が有効な状態でFlightへ入ると送信を開始します。最初のスキャンを受けてTopicが作られ、Flight終了時のinactive通知または受信タイムアウトで削除されます。`streamAt20Fps`を有効にすると`scanRateHz`を無視して20 Hz固定になります。
 
+各LiDARはVAB/SPHの`Edit ROS2 Sensor ID`で編集できる永続IDを持ちます。新規パーツには2Dなら`lidar_2d_<8桁UID>`、3Dなら`lidar_3d_<8桁UID>`が自動設定され、UDPの`sensorId`としてbridgeへ渡されます。
+
 ## Frame
 
 active vesselモデルと`partFlightId`が対応した場合、`frame_id`は機体linkの子LiDAR frameです。モデルがない場合は次のfallbackになります。
 
 ```text
-<frame_prefix>_<part_name>_lidar
+<frame_prefix>_<sensor_id>_lidar
 ```
 
 既定の`frame_prefix`は`ros2_ksp`です。

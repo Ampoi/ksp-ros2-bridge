@@ -39,8 +39,8 @@ KerbalLiDARは、KSP 1.xのFlightシーンとROS2ノードの間を2本のUDP経
 
 - bridge状態、集約モーター/推進系、機体制御、Ground Truth、モデル関連のTopicはbridge起動時から存在します。
 - LiDARとカメラのTopicは、対象パーツから最初のデータを受け取った時点で動的に作成されます。
-- `/actuators/<name>`はactive vesselのmanifestまたは最初のstateで動的に作成され、通常はmanifestから外れるか無通信timeoutになると削除されます。切断済みの分離機構だけは最終stateを保持し、active vessel切替時に削除されます。
-- `/ros2_ksp/docking_ports/<name>`はactive vesselのドッキングポートmanifestから動的に作成され、ポート消失または無通信timeoutで削除されます。
+- `/ksp_vessel/actuators/<type>`は種類ごとの常設Topicで、commandの`id`により個体を選択します。切断済みの分離状態はactive vessel切替まで保持されます。
+- `/ksp_vessel/docking_ports/<id>`はactive vesselのドッキングポートmanifestから動的に作成され、ポート消失または無通信timeoutで削除されます。
 - センサーTopicはKSPからinactive通知を受けると削除されます。通知が欠落した場合も、既定では最終受信から3秒後に削除されます。
 - 次のFlightでは、最初のデータ受信時に同じTopicが再作成されます。
 

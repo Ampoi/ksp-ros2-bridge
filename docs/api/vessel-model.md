@@ -6,21 +6,21 @@ Flight中の操作機体を、RViz向けのランタイム用プロキシURDFと
 
 | Topic | 型 | QoS | 内容 |
 |---|---|---|---|
-| `/ros2_ksp/active_vessel/robot_description` | `std_msgs/msg/String` | Reliable / transient local / depth 1 | URDF文字列 |
-| `/ros2_ksp/active_vessel/root_frame` | `std_msgs/msg/String` | Reliable / transient local / depth 1 | root link名 |
+| `/ksp_vessel/robot_description` | `std_msgs/msg/String` | Reliable / transient local / depth 1 | URDF文字列 |
+| `/ksp_vessel/root_frame` | `std_msgs/msg/String` | Reliable / transient local / depth 1 | root link名 |
 | `/tf` | `tf2_msgs/msg/TFMessage` | TransformBroadcaster既定 | 固定jointとセンサーframe |
 
 ```bash
-ros2 topic echo --once /ros2_ksp/active_vessel/root_frame
-ros2 topic echo --once /ros2_ksp/active_vessel/robot_description
+ros2 topic echo --once /ksp_vessel/root_frame
+ros2 topic echo --once /ksp_vessel/robot_description
 ```
 
 ## RViz2
 
-1. `ros2 topic echo --once /ros2_ksp/active_vessel/root_frame`でroot名を確認
+1. `ros2 topic echo --once /ksp_vessel/root_frame`でroot名を確認
 2. RViz2のFixed Frameへその値を設定
 3. RobotModelのDescription SourceをTopicへ変更
-4. Description Topicを`/ros2_ksp/active_vessel/robot_description`へ設定
+4. Description Topicを`/ksp_vessel/robot_description`へ設定
 
 bridgeがURDF固定jointを`/tf`へ既定5 Hzでpublishするため、この表示だけなら別の`robot_state_publisher`は不要です。
 

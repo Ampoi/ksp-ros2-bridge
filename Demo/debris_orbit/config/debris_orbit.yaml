@@ -1,0 +1,61 @@
+debris_orbit:
+  ros__parameters:
+    # 誤作動防止のため、launch時に enabled:=true を明示する。
+    enabled: false
+
+    # 機体・搭載センサーとの紐付け。VAB/SPHで設定したSensor IDに合わせる。
+    platform_id: demo_vehicle
+    lidar_sensor_id: front_lidar
+    camera_sensor_id: orbit_camera
+    vessel_topic_prefix: /ksp_vessel
+
+    # 空でなければSensor IDから組み立てるTopicよりこちらを優先する。
+    lidar_topic: ""
+    camera_topic: ""
+    pose_topic: /ksp_vessel/ground_truth/pose
+    twist_topic: /ksp_vessel/ground_truth/twist
+    body_wrench_topic: /ksp_vessel/body_wrench
+    world_frame: ground_truth_enu
+    body_frame: base_link
+
+    # 周回軌道。orbit_directionは+1/-1、normalはworld_frame基準。
+    orbit_radius: 15.0
+    angular_speed_deg_s: 3.0
+    orbit_direction: 1
+    orbit_plane_normal: [0.0, 0.0, 1.0]
+
+    # 機体ごとに調整するPDゲインとリミット（N, N*m）。
+    position_kp: 120.0
+    velocity_kd: 350.0
+    attitude_kp: 800.0
+    angular_kd: 300.0
+    max_force: 5000.0
+    max_torque: 3000.0
+    control_rate_hz: 20.0
+    # 円周へ収束し、この条件を満たした時点を撮影角0度とする。
+    arrival_position_tolerance: 0.75
+    arrival_speed_tolerance: 0.25
+    arrival_attitude_tolerance_deg: 5.0
+
+    # 3D LiDAR点群のデブリ抽出・追跡。
+    cluster_tolerance: 1.5
+    cluster_min_points: 8
+    voxel_size: 0.35
+    max_points: 4000
+    min_target_range: 1.0
+    max_target_range: 150.0
+    target_cluster_index: 0
+    target_max_jump: 8.0
+    target_filter_alpha: 0.25
+    target_velocity_filter_alpha: 0.35
+    # LiDARが見ている表面から物体中心方向（視線の奥）への補正量[m]。
+    target_center_offset: 0.0
+    state_timeout_sec: 0.5
+    target_timeout_sec: 1.0
+
+    # 0, 30, ... 330度で12枚を保存する。
+    capture_step_deg: 30.0
+    capture_count: 12
+    capture_tolerance_deg: 2.0
+    stop_after_capture: true
+    output_directory: debris_orbit_captures

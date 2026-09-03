@@ -1,4 +1,5 @@
 std_msgs/Header header
+string id
 string name
 bool enabled
 bool operational

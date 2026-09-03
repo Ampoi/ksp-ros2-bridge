@@ -340,6 +340,7 @@ namespace KerbalLiDAR
             AppendProperty(packetBuilder, "version", JsonVersion, false);
             AppendProperty(packetBuilder, "mode", Is3DMode() ? "3D" : "2D", false);
             var resolvedPartName = ResolvePartName();
+            AppendProperty(packetBuilder, "sensorId", resolvedPartName, false);
             AppendProperty(packetBuilder, "name", resolvedPartName, false);
             AppendProperty(packetBuilder, "partName", resolvedPartName, false);
             AppendProperty(packetBuilder, "lidarName", resolvedPartName, false);
@@ -515,6 +516,7 @@ namespace KerbalLiDAR
             AppendProperty(packetBuilder, "version", JsonVersion, false);
             AppendProperty(packetBuilder, "mode", Is3DMode() ? "3D" : "2D", false);
             var resolvedPartName = ResolvePartName();
+            AppendProperty(packetBuilder, "sensorId", resolvedPartName, false);
             AppendProperty(packetBuilder, "name", resolvedPartName, false);
             AppendProperty(packetBuilder, "partName", resolvedPartName, false);
             AppendProperty(packetBuilder, "lidarName", resolvedPartName, false);

@@ -1,4 +1,5 @@
 std_msgs/Header header
+string id
 string name
 string motor_type
 bool enabled

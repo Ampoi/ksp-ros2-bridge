@@ -133,6 +133,8 @@ namespace KerbalLiDAR
                 return;
             }
 
+            KerbalRosMotorCollisions.EnableBetweenConnectedParts(part, drivenPart, joint);
+
             // Stack-node orientation is the ConfigurableJoint X axis. Free only
             // that twist axis and keep both swing axes rigid.
             joint.angularXMotion = ConfigurableJointMotion.Free;

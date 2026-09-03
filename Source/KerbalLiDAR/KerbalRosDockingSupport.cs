@@ -57,10 +57,7 @@ namespace KerbalLiDAR
         private long frameSequence;
         private bool cameraTopicActive;
         private bool cameraStoppedExplicitly;
-        private Camera captureCamera;
-        private GameObject captureCameraObject;
-        private RenderTexture renderTexture;
-        private Texture2D readbackTexture;
+        private KspSceneRgbCapture sceneCapture;
         private float lastWarningTime = -1000f;
 
         public void Start()
@@ -356,12 +353,6 @@ namespace KerbalLiDAR
             }
             try
             {
-                EnsureCaptureResources();
-                var sourceCamera = FlightCamera.fetch != null ? FlightCamera.fetch.mainCamera : Camera.main;
-                if (sourceCamera == null)
-                {
-                    return;
-                }
                 var cameraTransform = entry.Node.nodeTransform;
                 if (cameraTransform == null)
                 {
@@ -374,31 +365,19 @@ namespace KerbalLiDAR
                 var forward = cameraTransform.forward.normalized;
                 var origin = cameraTransform.position + forward * 0.02f;
                 var rotation = Quaternion.LookRotation(forward, cameraTransform.up);
-                captureCamera.CopyFrom(sourceCamera);
-                captureCamera.enabled = false;
-                captureCamera.transform.position = origin;
-                captureCamera.transform.rotation = rotation;
-                captureCamera.fieldOfView = VerticalFovDegrees;
-                captureCamera.aspect = (float)ImageWidth / ImageHeight;
-                captureCamera.nearClipPlane = 0.05f;
-                captureCamera.farClipPlane = 20000f;
-                captureCamera.allowHDR = false;
-                captureCamera.allowMSAA = false;
-                captureCamera.targetTexture = renderTexture;
-                captureCamera.Render();
-
-                var previousActive = RenderTexture.active;
-                try
+                if (sceneCapture == null)
                 {
-                    RenderTexture.active = renderTexture;
-                    readbackTexture.ReadPixels(new Rect(0, 0, ImageWidth, ImageHeight), 0, 0, false);
-                    readbackTexture.Apply(false, false);
+                    sceneCapture = new KspSceneRgbCapture();
                 }
-                finally
-                {
-                    RenderTexture.active = previousActive;
-                }
-                SendCameraFrame(entry, ReadTopDownRgb(), origin, rotation);
+                var rgb = sceneCapture.Capture(
+                    ImageWidth,
+                    ImageHeight,
+                    origin,
+                    rotation,
+                    VerticalFovDegrees,
+                    0.05f,
+                    20000f);
+                SendCameraFrame(entry, rgb, origin, rotation);
                 cameraTopicActive = true;
             }
             catch (Exception exception)
@@ -429,6 +408,7 @@ namespace KerbalLiDAR
                 AppendNumber(builder, "chunkCount", chunkCount, false);
                 AppendNumber(builder, "frameBytes", rgb.Length, false);
                 AppendString(builder, "sha256", checksum, false);
+                AppendString(builder, "sensorId", entry.Name, false);
                 AppendString(builder, "partName", entry.Name, false);
                 AppendNumber(builder, "partFlightId", (long)entry.Part.flightID, false);
                 AppendDouble(builder, "universalTime", Planetarium.GetUniversalTime(), false);
@@ -457,6 +437,7 @@ namespace KerbalLiDAR
             AppendString(builder, "type", "ksp_camera_inactive", true);
             AppendNumber(builder, "version", ProtocolVersion, false);
             AppendString(builder, "source", "docking_port", false);
+            AppendString(builder, "sensorId", name, false);
             AppendString(builder, "partName", name, false);
             AppendNumber(builder, "partFlightId", entry != null && entry.Part != null ? (long)entry.Part.flightID : 0L, false);
             builder.Append('}');
@@ -464,60 +445,12 @@ namespace KerbalLiDAR
             cameraTopicActive = false;
         }
 
-        private byte[] ReadTopDownRgb()
-        {
-            var pixels = readbackTexture.GetPixels32();
-            var rgb = new byte[ImageWidth * ImageHeight * 3];
-            var targetIndex = 0;
-            for (var targetY = 0; targetY < ImageHeight; targetY++)
-            {
-                var sourceRow = (ImageHeight - 1 - targetY) * ImageWidth;
-                for (var x = 0; x < ImageWidth; x++)
-                {
-                    var pixel = pixels[sourceRow + x];
-                    rgb[targetIndex++] = pixel.r;
-                    rgb[targetIndex++] = pixel.g;
-                    rgb[targetIndex++] = pixel.b;
-                }
-            }
-            return rgb;
-        }
-
-        private void EnsureCaptureResources()
-        {
-            if (captureCamera != null && renderTexture != null && readbackTexture != null)
-            {
-                return;
-            }
-            DestroyCaptureResources();
-            captureCameraObject = new GameObject("Kerbal Docking RGB Capture Camera");
-            captureCameraObject.hideFlags = HideFlags.HideAndDontSave;
-            captureCamera = captureCameraObject.AddComponent<Camera>();
-            captureCamera.enabled = false;
-            renderTexture = new RenderTexture(ImageWidth, ImageHeight, 24, RenderTextureFormat.ARGB32);
-            renderTexture.Create();
-            readbackTexture = new Texture2D(ImageWidth, ImageHeight, TextureFormat.RGB24, false);
-        }
-
         private void DestroyCaptureResources()
         {
-            if (captureCamera != null) captureCamera.targetTexture = null;
-            if (renderTexture != null)
+            if (sceneCapture != null)
             {
-                renderTexture.Release();
-                Destroy(renderTexture);
-                renderTexture = null;
-            }
-            if (readbackTexture != null)
-            {
-                Destroy(readbackTexture);
-                readbackTexture = null;
-            }
-            if (captureCameraObject != null)
-            {
-                Destroy(captureCameraObject);
-                captureCameraObject = null;
-                captureCamera = null;
+                sceneCapture.Dispose();
+                sceneCapture = null;
             }
         }
 

@@ -14,8 +14,8 @@
 
 1. KSPプラグインDLLをReleaseビルド
 2. `GameData/KerbalLiDAR`をKSPの`GameData`へ同期
-3. `Ros2/ksp_ros2_interfaces`と`Ros2/ksp_lidar_bridge`をROS2 workspaceの`src`へ同期
-4. `colcon build --packages-up-to ksp_lidar_bridge`を実行
+3. `Ros2/ksp_ros2_interfaces`、`Ros2/ksp_lidar_bridge`、`Ros2/ksp_nav2_bringup`をROS2 workspaceの`src`へ同期
+4. bridgeとNav2連携パッケージを`colcon build`でビルド
 
 既定パスと異なる場合は環境変数で指定します。
 
@@ -33,10 +33,11 @@ ROS_SETUP="/opt/ros/jazzy/setup.bash" \
 mkdir -p ~/ros2_ws/src
 cp -r Ros2/ksp_ros2_interfaces ~/ros2_ws/src/
 cp -r Ros2/ksp_lidar_bridge ~/ros2_ws/src/
+cp -r Ros2/ksp_nav2_bringup ~/ros2_ws/src/
 cd ~/ros2_ws
 source /opt/ros/jazzy/setup.bash
 rosdep install --from-paths src --ignore-src --rosdistro jazzy -y
-colcon build --packages-up-to ksp_lidar_bridge
+colcon build --packages-up-to ksp_lidar_bridge ksp_nav2_bringup
 ```
 :::
 
@@ -55,7 +56,7 @@ ros2 run ksp_lidar_bridge udp_bridge --host 127.0.0.1 --port 49010
 起動直後にbridgeは`listening`をpublishします。
 
 ```bash
-ros2 topic echo --once /ros2_ksp/bridge/status
+ros2 topic echo --once /ros2_ksp/status
 ```
 
 期待値:
@@ -87,11 +88,11 @@ Flightでデータ送信が始まった後に確認します。
 
 ```bash
 ros2 topic list
-ros2 topic echo /joint_states
-ros2 topic echo /ros2_ksp/front_lidar/lidar/scan
-ros2 topic hz /ros2_ksp/rgb_camera/camera/image_raw
-ros2 topic echo /ground_truth/pose
-ros2 topic list | grep '^/actuators/'
+ros2 topic echo /ksp_vessel/joint_states
+ros2 topic echo /ksp_vessel/lidar_2d/front_lidar/scan
+ros2 topic hz /ksp_vessel/camera/rgb_camera/image_raw
+ros2 topic echo /ksp_vessel/ground_truth/pose
+ros2 topic list | grep '^/ksp_vessel/actuators/'
 ```
 
 センサーTopicは最初のフレームを受け取るまで作られません。bridgeだけを起動した段階で見えないのは正常です。

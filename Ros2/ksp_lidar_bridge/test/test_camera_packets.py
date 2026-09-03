@@ -64,6 +64,17 @@ class CameraFrameAssemblerTests(unittest.TestCase):
         self.assertIsNotNone(frame)
         self.assertEqual(frame.source, "docking_port")
 
+    def test_prefers_explicit_sensor_id(self):
+        assembler = CameraFrameAssembler()
+        packets = self.chunks()
+        for packet in packets:
+            packet["sensorId"] = "camera_ab12"
+        frame = None
+        for packet in packets:
+            frame = assembler.consume(packet) or frame
+        self.assertIsNotNone(frame)
+        self.assertEqual(frame.sensor_id, "camera_ab12")
+
     def test_rejects_checksum_mismatch(self):
         assembler = CameraFrameAssembler()
         packets = self.chunks()
@@ -93,8 +104,8 @@ class CameraTopicTests(unittest.TestCase):
         self.assertEqual(
             camera_topics("Front Camera"),
             (
-                "/ros2_ksp/front_camera/camera/image_raw",
-                "/ros2_ksp/front_camera/camera/camera_info",
+                "/ksp_vessel/camera/front_camera/image_raw",
+                "/ksp_vessel/camera/front_camera/camera_info",
             ),
         )
 

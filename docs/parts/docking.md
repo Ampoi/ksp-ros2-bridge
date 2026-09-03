@@ -12,10 +12,10 @@ ros2 topic list | grep docking_ports
 
 | 方向 | Topic | 型 | 内容 |
 |---|---|---|---|
-| 出力 | `/ros2_ksp/docking_ports/<name>/state` | `ksp_ros2_interfaces/msg/DockingPortState` | 接続・捕捉・切離し可否とカメラ選択状態。10 Hz、Best Effort |
-| 入力 | `/ros2_ksp/docking_ports/<name>/command` | `ksp_ros2_interfaces/msg/DockingPortCommand` | カメラ選択・停止・切離し。Reliable |
-| 出力 | `/ros2_ksp/docking_ports/<name>/camera/image_raw` | `sensor_msgs/msg/Image` | 選択中ポートの320×240、5 Hz、`rgb8`画像 |
-| 出力 | `/ros2_ksp/docking_ports/<name>/camera/camera_info` | `sensor_msgs/msg/CameraInfo` | 垂直FOV 60度のpinhole内部パラメーター |
+| 出力 | `/ksp_vessel/docking_ports/<id>/state` | `ksp_ros2_interfaces/msg/DockingPortState` | 接続・捕捉・切離し可否とカメラ選択状態。10 Hz、Best Effort |
+| 入力 | `/ksp_vessel/docking_ports/<id>/command` | `ksp_ros2_interfaces/msg/DockingPortCommand` | カメラ選択・停止・切離し。Reliable |
+| 出力 | `/ksp_vessel/docking_ports/<id>/camera/image_raw` | `sensor_msgs/msg/Image` | 選択中ポートの320×240、5 Hz、`rgb8`画像 |
+| 出力 | `/ksp_vessel/docking_ports/<id>/camera/camera_info` | `sensor_msgs/msg/CameraInfo` | 垂直FOV 60度のpinhole内部パラメーター |
 
 `state`にはKSPの生のstate文字列に加え、`docked`、`acquiring`、`releasable`、`camera_active`、接続相手の名前とpart IDが入ります。
 
@@ -25,7 +25,7 @@ Flight開始時とactive vessel切替時は、persistent ID順の先頭ポート
 
 ```bash
 ros2 topic pub --once \
-  /ros2_ksp/docking_ports/docking_port_12345_2/command \
+  /ksp_vessel/docking_ports/docking_port_12345_2/command \
   ksp_ros2_interfaces/msg/DockingPortCommand \
   '{action: 1, sequence: 1}'
 ```
@@ -38,7 +38,7 @@ ros2 topic pub --once \
 
 ```bash
 ros2 topic pub --once \
-  /ros2_ksp/docking_ports/docking_port_12345_2/command \
+  /ksp_vessel/docking_ports/docking_port_12345_2/command \
   ksp_ros2_interfaces/msg/DockingPortCommand \
   '{action: 3, sequence: 2}'
 ```

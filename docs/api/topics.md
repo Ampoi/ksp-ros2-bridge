@@ -1,100 +1,86 @@
 # Topic一覧
 
-表の方向はROS2ノードから見た方向です。`Publish`はbridgeがpublishし、`Subscribe`はbridgeがsubscribeします。
+Topicは、操作中の機体に属するものを`/ksp_vessel`、bridgeプロセス自身に属するものを`/ros2_ksp`へ分けています。表の方向はROS2ノードから見た方向です。
 
-## センサー・モデル
+## Bridge
 
-| 方向 | Topic | 型 | 生成 | QoS / 主な内容 |
-|---|---|---|---|---|
-| Publish | `/ros2_ksp/bridge/status` | `std_msgs/msg/String` | 常設 | Reliable / Transient Local / depth 1。`listening` |
-| Publish | `/ros2_ksp/<sensor_id>/lidar/scan` | `sensor_msgs/msg/LaserScan` | 動的 | Reliable / Volatile / depth 10。2D距離 |
-| Publish | `/ros2_ksp/<sensor_id>/lidar/points` | `sensor_msgs/msg/PointCloud2` | 動的 | Reliable / Volatile / depth 10。3D点群 |
-| Publish | `/ros2_ksp/<sensor_id>/camera/image_raw` | `sensor_msgs/msg/Image` | 動的 | Reliable / Volatile / depth 10。`rgb8`画像 |
-| Publish | `/ros2_ksp/<sensor_id>/camera/camera_info` | `sensor_msgs/msg/CameraInfo` | 動的 | Reliable / Volatile / depth 10。pinhole内部パラメーター |
-| Publish | `/ros2_ksp/docking_ports/<name>/camera/image_raw` | `sensor_msgs/msg/Image` | 動的 | Reliable / Volatile / depth 10。選択中ポートの`rgb8`画像 |
-| Publish | `/ros2_ksp/docking_ports/<name>/camera/camera_info` | `sensor_msgs/msg/CameraInfo` | 動的 | Reliable / Volatile / depth 10。ポートカメラ内部パラメーター |
-| Publish | `/ros2_ksp/active_vessel/robot_description` | `std_msgs/msg/String` | 常設 | Reliable / Transient Local / depth 1。プロキシURDF |
-| Publish | `/ros2_ksp/active_vessel/root_frame` | `std_msgs/msg/String` | 常設 | Reliable / Transient Local / depth 1。RViz Fixed Frame名 |
-| Publish | `/tf` | `tf2_msgs/msg/TFMessage` | 常設 | 機体、センサー、Ground TruthのTF |
-
-センサーTopicは最初の完全なデータを受信すると作成され、inactive通知または`--topic-timeout-sec`の無通信で削除されます。`<sensor_id>`はVAB/SPHで設定するセンサーIDです。
-
-## ドッキングポート
-
-| 方向 | Topic | 型 | QoS |
+| 方向 | Topic | 型 | QoS / 内容 |
 |---|---|---|---|
-| Publish | `/ros2_ksp/docking_ports/<name>/state` | `ksp_ros2_interfaces/msg/DockingPortState` | Best Effort / Volatile / depth 10 |
-| Subscribe | `/ros2_ksp/docking_ports/<name>/command` | `ksp_ros2_interfaces/msg/DockingPortCommand` | Reliable / Volatile / depth 10 |
+| Publish | `/ros2_ksp/status` | `std_msgs/msg/String` | Reliable / Transient Local。bridgeの稼働状態 |
+| Publish | `/ros2_ksp/diagnostics` | `diagnostic_msgs/msg/DiagnosticArray` | モーター診断とWrench配分残差 |
 
-`<name>`は`docking_port_<persistentId>_<moduleIndex>`です。commandは`SELECT_CAMERA`、`STOP_CAMERA`、`RELEASE`を提供します。詳細は[ドッキングポート](/parts/docking)を参照してください。
+## 機体・モデル
 
-## モーター・従来推進API
+| 方向 | Topic | 型 | QoS / 内容 |
+|---|---|---|---|
+| Subscribe | `/ksp_vessel/body_wrench` | `geometry_msgs/msg/WrenchStamped` | Reliable。`base_link`基準のN / N·m要求 |
+| Publish | `/ksp_vessel/ground_truth/pose` | `geometry_msgs/msg/PoseStamped` | Best Effort。ENU位置・姿勢 |
+| Publish | `/ksp_vessel/ground_truth/twist` | `geometry_msgs/msg/TwistStamped` | Best Effort。ENU速度 |
+| Publish | `/ksp_vessel/ground_truth/acceleration` | `geometry_msgs/msg/AccelStamped` | Best Effort。ENU加速度 |
+| Publish | `/ksp_vessel/joint_states` | `sensor_msgs/msg/JointState` | 全ROSサーボの状態 |
+| Publish | `/ksp_vessel/robot_description` | `std_msgs/msg/String` | Reliable / Transient Local。プロキシURDF |
+| Publish | `/ksp_vessel/root_frame` | `std_msgs/msg/String` | Reliable / Transient Local。RViz Fixed Frame名 |
+| Publish | `/tf` | `tf2_msgs/msg/TFMessage` | 機体、センサー、Ground TruthのTF |
 
-| 方向 | Topic | 型 | 生成 | 主な内容 |
-|---|---|---|---|---|
-| Subscribe | `/ros2_ksp/motors/command` | `trajectory_msgs/msg/JointTrajectory` | 常設 | 回転・直動モーター指令 |
-| Publish | `/joint_states` | `sensor_msgs/msg/JointState` | 常設 | 全ROSモーターの状態 |
-| Publish | `/diagnostics` | `diagnostic_msgs/msg/DiagnosticArray` | 常設 | モーター診断とWrench配分残差 |
-| Publish | `/ros2_ksp/propulsion/state` | `std_msgs/msg/String` | 常設 | Engine / RCS状態JSON |
-| Subscribe | `/ros2_ksp/propulsion/command` | `std_msgs/msg/String` | 常設 | Engine / RCS個別指令JSON |
-| Subscribe | `/ros2_ksp/propulsion/main_throttle` | `std_msgs/msg/Float64` | 常設 | メインスロットル`0.0..1.0` |
-| Subscribe | `/ros2_ksp/propulsion/rcs_command` | `geometry_msgs/msg/Twist` | 常設 | RCS並進・姿勢6軸、各`-1.0..1.0` |
+## センサー
 
-これらは既存クライアント向けの集約APIです。パーツ単位の制御には次の型付きTopicも利用できます。
+| 方向 | Topic | 型 |
+|---|---|---|
+| Publish | `/ksp_vessel/lidar_2d/<lidar_2d_id>/scan` | `sensor_msgs/msg/LaserScan` |
+| Publish | `/ksp_vessel/lidar_3d/<lidar_3d_id>/points` | `sensor_msgs/msg/PointCloud2` |
+| Publish | `/ksp_vessel/camera/<camera_id>/image_raw` | `sensor_msgs/msg/Image` |
+| Publish | `/ksp_vessel/camera/<camera_id>/camera_info` | `sensor_msgs/msg/CameraInfo` |
+| Publish | `/ksp_vessel/docking_ports/<id>/camera/image_raw` | `sensor_msgs/msg/Image` |
+| Publish | `/ksp_vessel/docking_ports/<id>/camera/camera_info` | `sensor_msgs/msg/CameraInfo` |
 
-## 機体制御・Ground Truth
-
-| 方向 | Topic | 型 | 生成 | QoS / 主な内容 |
-|---|---|---|---|---|
-| Subscribe | `/body_wrench` | `geometry_msgs/msg/WrenchStamped` | 常設 | Reliable / depth 10。`base_link`基準のN / N·m要求 |
-| Publish | `/ground_truth/pose` | `geometry_msgs/msg/PoseStamped` | 常設 | Best Effort / depth 10。ENU位置・姿勢 |
-| Publish | `/ground_truth/twist` | `geometry_msgs/msg/TwistStamped` | 常設 | Best Effort / depth 10。ENU速度 |
-| Publish | `/ground_truth/acceleration` | `geometry_msgs/msg/AccelStamped` | 常設 | Best Effort / depth 10。ENU加速度 |
-
-Ground TruthはFlight中に30 Hzで更新され、3つのメッセージと`ground_truth_enu -> base_link` TFは同じbridge受信時刻を共有します。詳細は[機体制御とGround Truth](/api/vehicle-control)を参照してください。
+LiDARとRGBカメラのIDはVAB/SPHの`Edit ROS2 Sensor ID`で設定します。新規パーツには`lidar_2d_...`、`lidar_3d_...`、`camera_...`のIDが自動生成されます。センサーTopicは最初の完全なデータで作成され、inactive通知または`--topic-timeout-sec`の無通信で削除されます。
 
 ## 型付きアクチュエータ
 
-Flight中に検出したアクチュエータごとに、次の2 Topicを動的に作成します。
+個体ごとにTopicを作らず、種類ごとに1組の`command` / `state`を共有します。すべてのcommandは`id`フィールドで対象を指定し、stateにも送信元の`id`が入ります。stateの`name`は既存コード向けの同値エイリアスです。
 
-| 方向 | Topic | QoS |
-|---|---|---|
-| Subscribe | `/actuators/<name>/command` | Reliable / Volatile / depth 10 |
-| Publish | `/actuators/<name>/state` | 通常はBest Effort / Volatile / depth 10。分離機構はReliable / Transient Local / depth 1 |
-
-| 対象 | command型 | state型 | 名前の例 |
+| 対象 | Command Topic | State Topic | 型 |
 |---|---|---|---|
-| KSP標準ホイール | `ksp_ros2_interfaces/msg/WheelCommand` | `ksp_ros2_interfaces/msg/WheelState` | `wheel_<persistentId>_<moduleIndex>` |
-| Engine | `ksp_ros2_interfaces/msg/EngineCommand` | `ksp_ros2_interfaces/msg/EngineState` | `engine_<persistentId>_<moduleIndex>` |
-| RCS | `ksp_ros2_interfaces/msg/RcsCommand` | `ksp_ros2_interfaces/msg/RcsState` | `rcs_<persistentId>_<moduleIndex>` |
-| ROSモーター | `ksp_ros2_interfaces/msg/MotorCommand` | `ksp_ros2_interfaces/msg/MotorState` | `servo_<flightId>` / `linear_<flightId>` |
-| デカプラー／フェアリング | `ksp_ros2_interfaces/msg/SeparationCommand` | `ksp_ros2_interfaces/msg/SeparationState` | `decoupler_<persistentId>_<moduleIndex>` / `fairing_<persistentId>_<moduleIndex>` |
+| ROSサーボ／リニアモーター | `/ksp_vessel/actuators/servo/command` | `/ksp_vessel/actuators/servo/state` | `MotorCommand` / `MotorState` |
+| KSP標準ホイール | `/ksp_vessel/actuators/wheel/command` | `/ksp_vessel/actuators/wheel/state` | `WheelCommand` / `WheelState` |
+| Engine | `/ksp_vessel/actuators/propulsion/command` | `/ksp_vessel/actuators/propulsion/state` | `EngineCommand` / `EngineState` |
+| RCSモジュール | `/ksp_vessel/actuators/rcs/command` | `/ksp_vessel/actuators/rcs/state` | `RcsCommand` / `RcsState` |
+| デカプラー／フェアリング | `/ksp_vessel/actuators/separation/command` | `/ksp_vessel/actuators/separation/state` | `SeparationCommand` / `SeparationState` |
 
-通常のアクチュエータはmanifestから外れた場合、または状態が`--topic-timeout-sec`の間届かなかった場合にcommand subscriptionとstate publisherを削除します。切断済みの分離機構だけはReliable / Transient Local / depth 1で最終状態を保持し、active vesselが変わると削除します。全フィールドは[ホイール](/parts/wheels)、[モーター](/parts/motors)、[推進系](/parts/propulsion)、[デカプラー／フェアリング](/parts/separation)に掲載しています。
+commandはReliable / Volatile / depth 10です。通常のstateはBest Effort / Volatile / depth 10、分離stateはReliable / Transient Local / depth 10です。
 
-## Timestamp
+### 集約操作
 
-ROSメッセージの`header.stamp`にはbridge受信時のROSクロックを使います。KSP側の`universalTime`はUDPパケットの検証や状態JSONには使われますが、標準ROSメッセージのstampへ直接変換しません。ImageとCameraInfo、Ground Truthの各メッセージとTFは、それぞれ同一受信内で同じstampを共有します。
+| 方向 | Topic | 型 | 内容 |
+|---|---|---|---|
+| Subscribe | `/ksp_vessel/actuators/servo/trajectory` | `trajectory_msgs/msg/JointTrajectory` | 複数サーボの軌道指令 |
+| Subscribe | `/ksp_vessel/actuators/propulsion/main_throttle` | `std_msgs/msg/Float64` | メインスロットル |
+| Subscribe | `/ksp_vessel/actuators/rcs/twist_command` | `geometry_msgs/msg/Twist` | RCS 6軸指令 |
+| Subscribe | `/ksp_vessel/actuators/propulsion/json_command` | `std_msgs/msg/String` | 旧JSON個別指令 |
+| Publish | `/ksp_vessel/actuators/propulsion/json_state` | `std_msgs/msg/String` | 旧JSON状態 |
 
-## 名前を変更できる起動引数
+## ドッキングポート
+
+| 方向 | Topic | 型 |
+|---|---|---|
+| Publish | `/ksp_vessel/docking_ports/<id>/state` | `ksp_ros2_interfaces/msg/DockingPortState` |
+| Subscribe | `/ksp_vessel/docking_ports/<id>/command` | `ksp_ros2_interfaces/msg/DockingPortCommand` |
+
+`<id>`は`docking_port_<persistentId>_<moduleIndex>`です。commandは`SELECT_CAMERA`、`STOP_CAMERA`、`RELEASE`を提供します。
+
+## 主な起動引数
 
 | 対象 | 引数 | 既定値 |
 |---|---|---|
-| センサーTopicとbridge status | `--topic-prefix` | `/ros2_ksp` |
-| モーター指令 | `--motor-command-topic` | `/ros2_ksp/motors/command` |
-| モーター状態 | `--joint-states-topic` | `/joint_states` |
-| 診断 | `--diagnostics-topic` | `/diagnostics` |
-| 推進系状態 | `--propulsion-state-topic` | `/ros2_ksp/propulsion/state` |
-| 推進系JSON指令 | `--propulsion-command-topic` | `/ros2_ksp/propulsion/command` |
-| メインスロットル | `--main-throttle-topic` | `/ros2_ksp/propulsion/main_throttle` |
-| RCS指令 | `--rcs-command-topic` | `/ros2_ksp/propulsion/rcs_command` |
-| Body Wrench | `--body-wrench-topic` | `/body_wrench` |
-| Ground Truth | `--ground-truth-prefix` | `/ground_truth` |
-| 型付きアクチュエータ | `--actuators-prefix` | `/actuators` |
-| ドッキングポート | `--docking-ports-prefix` | `<topic-prefix>/docking_ports` |
-| URDF | `--robot-description-topic` | `/ros2_ksp/active_vessel/robot_description` |
-| root frame | `--root-frame-topic` | `/ros2_ksp/active_vessel/root_frame` |
+| 機体センサー | `--topic-prefix` | `/ksp_vessel` |
+| bridge状態 | `--bridge-prefix` | `/ros2_ksp` |
+| 診断 | `--diagnostics-topic` | `/ros2_ksp/diagnostics` |
+| Body Wrench | `--body-wrench-topic` | `/ksp_vessel/body_wrench` |
+| Ground Truth | `--ground-truth-prefix` | `/ksp_vessel/ground_truth` |
+| アクチュエータ | `--actuators-prefix` | `/ksp_vessel/actuators` |
+| ドッキングポート | `--docking-ports-prefix` | `/ksp_vessel/docking_ports` |
+| joint state | `--joint-states-topic` | `/ksp_vessel/joint_states` |
+| URDF | `--robot-description-topic` | `/ksp_vessel/robot_description` |
+| root frame | `--root-frame-topic` | `/ksp_vessel/root_frame` |
 
-::: warning prefixは独立しています
-`--topic-prefix`を変更しても、モーター、推進系、機体制御、モデルの既定Topicは自動追従しません。すべてを別namespaceへ移す場合は専用引数も指定してください。
-:::
+全オプションは`ros2 run ksp_lidar_bridge udp_bridge --help`で確認できます。

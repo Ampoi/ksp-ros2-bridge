@@ -15,11 +15,11 @@
 
 | 方向 | Topic | 型 | 内容 |
 |---|---|---|---|
-| 入力 | `/ros2_ksp/motors/command` | `trajectory_msgs/msg/JointTrajectory` | 位置、速度、effort上限 |
-| 出力 | `/joint_states` | `sensor_msgs/msg/JointState` | position、velocity、effort |
-| 出力 | `/diagnostics` | `diagnostic_msgs/msg/DiagnosticArray` | 電源・engage・lock・推定電流 |
-| 入力 | `/actuators/<name>/command` | `ksp_ros2_interfaces/msg/MotorCommand` | モーター単位の型付き指令 |
-| 出力 | `/actuators/<name>/state` | `ksp_ros2_interfaces/msg/MotorState` | モーター単位の型付き状態 |
+| 入力 | `/ksp_vessel/actuators/servo/trajectory` | `trajectory_msgs/msg/JointTrajectory` | 複数サーボの位置、速度、effort上限 |
+| 出力 | `/ksp_vessel/joint_states` | `sensor_msgs/msg/JointState` | position、velocity、effort |
+| 出力 | `/ros2_ksp/diagnostics` | `diagnostic_msgs/msg/DiagnosticArray` | 電源・engage・lock・推定電流 |
+| 入力 | `/ksp_vessel/actuators/servo/command` | `ksp_ros2_interfaces/msg/MotorCommand` | `id`で指定する型付き指令 |
+| 出力 | `/ksp_vessel/actuators/servo/state` | `ksp_ros2_interfaces/msg/MotorState` | `id`付きの型付き状態 |
 
 既定ではKSPが状態を20 HzでUDP 49010へ送り、bridgeは受信するたびにROS2へpublishします。ROS2指令はbridgeからUDP 49011へ送られます。
 
@@ -32,16 +32,16 @@ servo_<partFlightId>
 linear_<partFlightId>
 ```
 
-実際の名前は`/joint_states.name`またはKSPのPart Action Windowにある`ROS Joint`で確認してください。
+実際の名前は`/ksp_vessel/joint_states.name`またはKSPのPart Action Windowにある`ROS Joint`で確認してください。
 
-型付きcommand TopicはReliable、state TopicはBest Effortで、どちらもdepth 10です。active vesselのmanifestから外れるか、状態が`--topic-timeout-sec`の間届かないと削除されます。
+型付きcommand TopicはReliable、state TopicはBest Effortで、どちらもdepth 10です。Topicは常設され、複数モーターのメッセージが同じTopicを流れます。
 
 ## 位置指令
 
 サーボを90度へ、速度上限0.5 rad/s、effort上限100 N·mで動かします。
 
 ```bash
-ros2 topic pub --once /ros2_ksp/motors/command \
+ros2 topic pub --once /ksp_vessel/actuators/servo/trajectory \
   trajectory_msgs/msg/JointTrajectory \
   "{joint_names: [servo_12345], points: [{positions: [1.5708], velocities: [0.5], effort: [100.0]}]}"
 ```
@@ -53,7 +53,7 @@ ros2 topic pub --once /ros2_ksp/motors/command \
 `positions`を省略し、`velocities`を指定するとvelocity modeになります。
 
 ```bash
-ros2 topic pub -r 10 /ros2_ksp/motors/command \
+ros2 topic pub -r 10 /ksp_vessel/actuators/servo/trajectory \
   trajectory_msgs/msg/JointTrajectory \
   "{joint_names: [linear_12345], points: [{velocities: [0.1]}]}"
 ```
@@ -75,7 +75,7 @@ velocity modeはKSP側で既定0.5秒の通信タイムアウトを持ちます�
 | revolute | rad | rad/s | N·m |
 | prismatic | m | m/s | N |
 
-`/diagnostics`の`estimated_current_a`は、推定effortを`torquePerAmpNm`または`forcePerAmpN`で割った値です。実測電流ではありません。
+`/ros2_ksp/diagnostics`の`estimated_current_a`は、推定effortを`torquePerAmpNm`または`forcePerAmpN`で割った値です。実測電流ではありません。
 
 ## MotorCommand / MotorState
 
@@ -84,6 +84,7 @@ velocity modeはKSP側で既定0.5秒の通信タイムアウトを持ちます�
 | MotorCommand field | 内容 |
 |---|---|
 | `header` | 現行bridgeでは指令変換に使用しない |
+| `id` | 対象のROS joint ID |
 | `mode` | `MODE_POSITION=0`、`MODE_VELOCITY=1`、`MODE_EFFORT=2` |
 | `enabled` | `false`ならモーターをdisengage |
 | `position` | position modeの目標。回転rad、直動m |
@@ -92,14 +93,15 @@ velocity modeはKSP側で既定0.5秒の通信タイムアウトを持ちます�
 | `timeout_sec` | override時間。0ならbridge既定値 |
 
 ```bash
-ros2 topic pub -r 10 /actuators/servo_12345/command \
+ros2 topic pub -r 10 /ksp_vessel/actuators/servo/command \
   ksp_ros2_interfaces/msg/MotorCommand \
-  "{mode: 0, enabled: true, position: 1.5708, timeout_sec: 0.5}"
+  "{id: servo_12345, mode: 0, enabled: true, position: 1.5708, timeout_sec: 0.5}"
 ```
 
 | MotorState field | 内容 |
 |---|---|
 | `header` | bridge受信時刻、`frame_id = base_link` |
+| `id` | ROS joint ID |
 | `name` | ROS joint名 |
 | `motor_type` | `revolute` / `prismatic` |
 | `enabled` | engage状態 |
@@ -121,6 +123,10 @@ ros2 topic pub -r 10 /actuators/servo_12345/command \
 | disengaged | WARN | `Motor disengaged` |
 | locked | WARN | `Servo locked` |
 | 通常 | OK | `Motor operational` |
+
+## 機体内の衝突判定
+
+モーター本体と`top`ノードに接続された駆動側パーツは、飛行中も互いのコライダーが有効です。既存の機体ファイルでKSPの`sameVesselCollision`が無効として保存されていても、ジョイント初期化時に両パーツへ適用されます。
 
 ## 実装確認先
 

@@ -156,6 +156,10 @@ class ScanNormalizationTests(unittest.TestCase):
 
 
 class NameTests(unittest.TestCase):
+    def test_prefers_explicit_sensor_id(self):
+        packet = {"sensorId": "lidar_3d_ab12", "partName": "legacy_name"}
+        self.assertEqual(packet_part_name(packet), "lidar_3d_ab12")
+
     def test_prefers_part_name(self):
         packet = {
             "partName": "roof_lidar",
@@ -173,20 +177,20 @@ class NameTests(unittest.TestCase):
         self.assertEqual(packet_part_name(packet), "mun_rover_42")
 
     def test_builds_topic_suffix_for_each_lidar_mode(self):
-        self.assertEqual(lidar_topic_suffix("2D"), "lidar/scan")
-        self.assertEqual(lidar_topic_suffix("3d"), "lidar/points")
+        self.assertEqual(lidar_topic_suffix("2D"), ("lidar_2d", "scan"))
+        self.assertEqual(lidar_topic_suffix("3d"), ("lidar_3d", "points"))
 
     def test_builds_full_topic_from_part_name_and_mode(self):
         self.assertEqual(
             lidar_topic_from_packet({"partName": "Front LiDAR", "mode": "2D"}),
-            "/ros2_ksp/front_lidar/lidar/scan",
+            "/ksp_vessel/lidar_2d/front_lidar/scan",
         )
         self.assertEqual(
             lidar_topic_from_packet(
                 {"partName": "roof_lidar", "mode": "3D"},
                 "/robot/sensors/",
             ),
-            "/robot/sensors/roof_lidar/lidar/points",
+            "/robot/sensors/lidar_3d/roof_lidar/points",
         )
 
     def test_rejects_unknown_lidar_mode(self):

@@ -71,7 +71,12 @@ def as_int(value: Any, default: int) -> int:
 
 
 def packet_part_name(packet: Dict[str, Any]) -> str:
-    explicit = packet.get("partName") or packet.get("lidarName") or packet.get("name")
+    explicit = (
+        packet.get("sensorId")
+        or packet.get("partName")
+        or packet.get("lidarName")
+        or packet.get("name")
+    )
     if explicit:
         return str(explicit)
 
@@ -85,20 +90,21 @@ def packet_lidar_name(packet: Dict[str, Any]) -> str:
     return packet_part_name(packet)
 
 
-def lidar_topic_suffix(mode: Any) -> str:
+def lidar_topic_suffix(mode: Any) -> Tuple[str, str]:
     normalized_mode = str(mode or "").upper()
     if normalized_mode == "2D":
-        return "lidar/scan"
+        return "lidar_2d", "scan"
     if normalized_mode == "3D":
-        return "lidar/points"
+        return "lidar_3d", "points"
     raise ValueError(f"unsupported LiDAR mode: {normalized_mode}")
 
 
-def lidar_topic_from_packet(packet: Dict[str, Any], topic_prefix: str = "/ros2_ksp") -> str:
+def lidar_topic_from_packet(packet: Dict[str, Any], topic_prefix: str = "/ksp_vessel") -> str:
     prefix_value = str(topic_prefix or "").strip("/")
     prefix = f"/{prefix_value}" if prefix_value else ""
     part_name = sanitize_ros_name(packet_part_name(packet), "lidar")
-    return f"{prefix}/{part_name}/{lidar_topic_suffix(packet.get('mode'))}"
+    sensor_kind, suffix = lidar_topic_suffix(packet.get("mode"))
+    return f"{prefix}/{sensor_kind}/{part_name}/{suffix}"
 
 
 def normalized_ranges(values: Any, count: int, range_max: float) -> List[float]:

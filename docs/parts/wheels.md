@@ -1,6 +1,6 @@
 # KSP標準ホイール
 
-active vessel内の`ModuleWheelBase`を自動検出し、ホイール単位の型付きTopicを作成します。専用パーツへの置き換えは不要です。
+active vessel内の`ModuleWheelBase`を自動検出し、共有の型付きTopicで制御します。専用パーツへの置き換えは不要です。
 
 ## 入出力Topic
 
@@ -8,8 +8,8 @@ active vessel内の`ModuleWheelBase`を自動検出し、ホイール単位の�
 
 | 方向 | Topic | 型 | QoS |
 |---|---|---|---|
-| 入力 | `/actuators/<name>/command` | `ksp_ros2_interfaces/msg/WheelCommand` | Reliable / depth 10 |
-| 出力 | `/actuators/<name>/state` | `ksp_ros2_interfaces/msg/WheelState` | Best Effort / depth 10 |
+| 入力 | `/ksp_vessel/actuators/wheel/command` | `ksp_ros2_interfaces/msg/WheelCommand` | Reliable / depth 10 |
+| 出力 | `/ksp_vessel/actuators/wheel/state` | `ksp_ros2_interfaces/msg/WheelState` | Best Effort / depth 10 |
 
 状態はFlight中に30 Hzで送信されます。
 
@@ -18,6 +18,7 @@ active vessel内の`ModuleWheelBase`を自動検出し、ホイール単位の�
 | Field | 単位 | 内容 |
 |---|---|---|
 | `header` | — | 現行bridgeでは指令変換に使用しない |
+| `id` | — | 対象の`wheel_<persistentId>_<moduleIndex>` |
 | `enabled` | — | ホイールモーターを有効化 |
 | `target_angular_velocity` | rad/s | 目標回転速度 |
 | `steering_angle` | rad | 目標操舵角 |
@@ -25,9 +26,9 @@ active vessel内の`ModuleWheelBase`を自動検出し、ホイール単位の�
 | `timeout_sec` | s | override時間。0ならbridge既定値 |
 
 ```bash
-ros2 topic pub -r 10 /actuators/wheel_12345_2/command \
+ros2 topic pub -r 10 /ksp_vessel/actuators/wheel/command \
   ksp_ros2_interfaces/msg/WheelCommand \
-  "{enabled: true, target_angular_velocity: 12.0, steering_angle: 0.2, max_drive_torque: 20.0, timeout_sec: 0.5}"
+  "{id: wheel_12345_2, enabled: true, target_angular_velocity: 12.0, steering_angle: 0.2, max_drive_torque: 20.0, timeout_sec: 0.5}"
 ```
 
 ## WheelState
@@ -35,6 +36,7 @@ ros2 topic pub -r 10 /actuators/wheel_12345_2/command \
 | Field | 単位 | 内容 |
 |---|---|---|
 | `header` | — | bridge受信時刻、`frame_id = base_link` |
+| `id` | — | アクチュエータID |
 | `name` | — | アクチュエータ名 |
 | `enabled` | — | モーター有効状態 |
 | `grounded` | — | 接地状態 |
@@ -47,7 +49,7 @@ ros2 topic pub -r 10 /actuators/wheel_12345_2/command \
 | `max_drive_torque` | N·m | 現在の最大駆動トルク |
 
 ```bash
-ros2 topic echo /actuators/wheel_12345_2/state
+ros2 topic echo /ksp_vessel/actuators/wheel/state
 ```
 
 ## 制御の優先順位と解除

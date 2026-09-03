@@ -101,15 +101,24 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--host", default="0.0.0.0", help="UDP bind host.")
     parser.add_argument("--port", type=int, default=49010, help="UDP bind port.")
-    parser.add_argument("--topic-prefix", default="/ros2_ksp")
+    parser.add_argument(
+        "--topic-prefix",
+        default="/ksp_vessel",
+        help="Active-vessel sensor Topic prefix.",
+    )
+    parser.add_argument(
+        "--bridge-prefix",
+        default="/ros2_ksp",
+        help="Bridge-owned status and diagnostics Topic prefix.",
+    )
     parser.add_argument("--frame-prefix", default="ros2_ksp")
     parser.add_argument(
         "--robot-description-topic",
-        default="/ros2_ksp/active_vessel/robot_description",
+        default="/ksp_vessel/robot_description",
     )
     parser.add_argument(
         "--root-frame-topic",
-        default="/ros2_ksp/active_vessel/root_frame",
+        default="/ksp_vessel/root_frame",
     )
     parser.add_argument(
         "--model-tf-rate",
@@ -137,24 +146,27 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--command-host", default="127.0.0.1")
     parser.add_argument("--command-port", type=int, default=49011)
-    parser.add_argument("--motor-command-topic", default="/ros2_ksp/motors/command")
-    parser.add_argument("--joint-states-topic", default="/joint_states")
-    parser.add_argument("--diagnostics-topic", default="/diagnostics")
+    parser.add_argument(
+        "--motor-command-topic",
+        default="/ksp_vessel/actuators/servo/trajectory",
+    )
+    parser.add_argument("--joint-states-topic", default="/ksp_vessel/joint_states")
+    parser.add_argument("--diagnostics-topic", default="/ros2_ksp/diagnostics")
     parser.add_argument(
         "--propulsion-command-topic",
-        default="/ros2_ksp/propulsion/command",
+        default="/ksp_vessel/actuators/propulsion/json_command",
     )
     parser.add_argument(
         "--propulsion-state-topic",
-        default="/ros2_ksp/propulsion/state",
+        default="/ksp_vessel/actuators/propulsion/json_state",
     )
     parser.add_argument(
         "--main-throttle-topic",
-        default="/ros2_ksp/propulsion/main_throttle",
+        default="/ksp_vessel/actuators/propulsion/main_throttle",
     )
     parser.add_argument(
         "--rcs-command-topic",
-        default="/ros2_ksp/propulsion/rcs_command",
+        default="/ksp_vessel/actuators/rcs/twist_command",
     )
     parser.add_argument(
         "--propulsion-timeout-sec",
@@ -162,9 +174,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         default=0.5,
         help="KSP propulsion failsafe timeout for Float64/Twist commands.",
     )
-    parser.add_argument("--body-wrench-topic", default="/body_wrench")
-    parser.add_argument("--ground-truth-prefix", default="/ground_truth")
-    parser.add_argument("--actuators-prefix", default="/actuators")
+    parser.add_argument("--body-wrench-topic", default="/ksp_vessel/body_wrench")
+    parser.add_argument("--ground-truth-prefix", default="/ksp_vessel/ground_truth")
+    parser.add_argument("--actuators-prefix", default="/ksp_vessel/actuators")
     parser.add_argument(
         "--docking-ports-prefix",
         default="",
@@ -180,10 +192,19 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 
 class KerbalLidarUdpBridge(Node):
+    ACTUATOR_TOPIC_NAMES = {
+        "wheel": "wheel",
+        "engine": "propulsion",
+        "rcs": "rcs",
+        "motor": "servo",
+        "separation": "separation",
+    }
+
     def __init__(self, args: argparse.Namespace) -> None:
         super().__init__(sanitize_ros_name(args.node_name, "ksp_lidar_udp_bridge"))
         self.args = args
         self.topic_prefix = "/" + args.topic_prefix.strip("/")
+        self.bridge_prefix = "/" + args.bridge_prefix.strip("/")
         self.lidar_publishers: Dict[str, Any] = {}
         self.lidar_publisher_types: Dict[str, str] = {}
         self.lidar_last_seen: Dict[str, float] = {}
@@ -207,7 +228,7 @@ class KerbalLidarUdpBridge(Node):
             String, args.root_frame_topic, model_qos
         )
         self.status_publisher = self.create_publisher(
-            String, f"{self.topic_prefix}/bridge/status", model_qos
+            String, f"{self.bridge_prefix}/status", model_qos
         )
         self.transform_broadcaster = TransformBroadcaster(self)
         self.model_assembler = UrdfChunkAssembler()
@@ -223,7 +244,10 @@ class KerbalLidarUdpBridge(Node):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind((args.host, args.port))
         self.sock.setblocking(False)
-        motor_command_topic = args.motor_command_topic or f"{self.topic_prefix}/motors/command"
+        motor_command_topic = (
+            args.motor_command_topic
+            or f"{self.topic_prefix}/actuators/servo/trajectory"
+        )
         self.motor_command_subscription = self.create_subscription(
             JointTrajectory, motor_command_topic, self.queue_motor_trajectory, 10
         )
@@ -265,6 +289,7 @@ class KerbalLidarUdpBridge(Node):
             if args.docking_ports_prefix.strip("/")
             else f"{self.topic_prefix}/docking_ports"
         )
+        self.create_actuator_topics(command_qos, state_qos)
         self.body_wrench_subscription = self.create_subscription(
             WrenchStamped,
             args.body_wrench_topic,
@@ -287,7 +312,7 @@ class KerbalLidarUdpBridge(Node):
         self.status_publisher.publish(String(data="listening"))
         self.get_logger().info(
             f"Listening on udp://{args.host}:{args.port}; "
-            f"publishing LiDAR under {self.topic_prefix}/<part_name>/lidar; "
+            f"publishing sensors under {self.topic_prefix}/<sensor_kind>/<sensor_id>; "
             f"motor commands {motor_command_topic} -> "
             f"udp://{args.command_host}:{args.command_port}"
         )
@@ -642,8 +667,10 @@ class KerbalLidarUdpBridge(Node):
             topics = [lidar_topic_from_packet(packet, self.topic_prefix)]
         except ValueError:
             part_name = sanitize_ros_name(packet_part_name(packet), "lidar")
-            base_topic = f"{self.topic_prefix}/{part_name}/lidar"
-            topics = [f"{base_topic}/scan", f"{base_topic}/points"]
+            topics = [
+                f"{self.topic_prefix}/lidar_2d/{part_name}/scan",
+                f"{self.topic_prefix}/lidar_3d/{part_name}/points",
+            ]
         for topic in topics:
             self.remove_publisher(topic, reason)
 
@@ -941,6 +968,7 @@ class KerbalLidarUdpBridge(Node):
             message = WheelState()
             message.header.stamp = stamp
             message.header.frame_id = "base_link"
+            message.id = name
             message.name = name
             message.enabled = bool(state.get("enabled", False))
             message.grounded = bool(state.get("grounded", False))
@@ -955,6 +983,7 @@ class KerbalLidarUdpBridge(Node):
             message = EngineState()
             message.header.stamp = stamp
             message.header.frame_id = "base_link"
+            message.id = name
             message.name = name
             message.enabled = bool(state.get("enabled", False))
             message.operational = bool(state.get("operational", False))
@@ -967,6 +996,7 @@ class KerbalLidarUdpBridge(Node):
             message = RcsState()
             message.header.stamp = stamp
             message.header.frame_id = "base_link"
+            message.id = name
             message.name = name
             message.enabled = bool(state.get("enabled", False))
             message.active = bool(state.get("active", False))
@@ -979,6 +1009,7 @@ class KerbalLidarUdpBridge(Node):
             message = SeparationState()
             message.header.stamp = stamp
             message.header.frame_id = "base_link"
+            message.id = name
             message.name = name
             message.mechanism = state["mechanism"]
             message.available = bool(state.get("available", False))
@@ -1012,6 +1043,7 @@ class KerbalLidarUdpBridge(Node):
                 "active vessel changed" if vessel_changed else "not in active-vessel manifest",
             )
         if vessel_changed:
+            self.reset_separation_state_publisher()
             self.latched_separations.clear()
         if vessel_id:
             self.active_actuator_vessel_id = vessel_id
@@ -1020,6 +1052,38 @@ class KerbalLidarUdpBridge(Node):
             if self.ensure_actuator(name, kind) is not None:
                 self.actuator_last_seen[name] = now
 
+    def create_actuator_topics(self, command_qos: QoSProfile, state_qos: QoSProfile) -> None:
+        state_types = {
+            "wheel": WheelState,
+            "engine": EngineState,
+            "rcs": RcsState,
+            "motor": MotorState,
+            "separation": SeparationState,
+        }
+        command_types = {
+            "wheel": WheelCommand,
+            "engine": EngineCommand,
+            "rcs": RcsCommand,
+            "motor": MotorCommand,
+            "separation": SeparationCommand,
+        }
+        for kind, topic_name in self.ACTUATOR_TOPIC_NAMES.items():
+            kind_state_qos = state_qos
+            if kind == "separation":
+                kind_state_qos = QoSProfile(depth=10)
+                kind_state_qos.reliability = ReliabilityPolicy.RELIABLE
+                kind_state_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
+            base_topic = f"{self.actuators_prefix}/{topic_name}"
+            self.actuator_publishers[kind] = self.create_publisher(
+                state_types[kind], f"{base_topic}/state", kind_state_qos
+            )
+            callback = lambda message, k=kind: self.send_typed_actuator_command(
+                k, message
+            )
+            self.actuator_subscriptions[kind] = self.create_subscription(
+                command_types[kind], f"{base_topic}/command", callback, command_qos
+            )
+
     def ensure_actuator(self, name: str, kind: str) -> Optional[Any]:
         previous_kind = self.actuator_kinds.get(name)
         if previous_kind is not None and previous_kind != kind:
@@ -1027,56 +1091,27 @@ class KerbalLidarUdpBridge(Node):
                 f"Actuator {name} changed type from {previous_kind} to {kind}; dropped"
             )
             return None
-        existing = self.actuator_publishers.get(name)
-        if existing is not None:
-            return existing
-        state_type = {
-            "wheel": WheelState,
-            "engine": EngineState,
-            "rcs": RcsState,
-            "motor": MotorState,
-            "separation": SeparationState,
-        }[kind]
-        command_type = {
-            "wheel": WheelCommand,
-            "engine": EngineCommand,
-            "rcs": RcsCommand,
-            "motor": MotorCommand,
-            "separation": SeparationCommand,
-        }[kind]
-        base_topic = f"{self.actuators_prefix}/{name}"
-        state_qos = QoSProfile(depth=10)
-        state_qos.reliability = ReliabilityPolicy.BEST_EFFORT
-        if kind == "separation":
-            state_qos = QoSProfile(depth=1)
-            state_qos.reliability = ReliabilityPolicy.RELIABLE
-            state_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
-        command_qos = QoSProfile(depth=10)
-        command_qos.reliability = ReliabilityPolicy.RELIABLE
-        publisher = self.create_publisher(state_type, f"{base_topic}/state", state_qos)
-        callback = lambda message, n=name, k=kind: self.send_typed_actuator_command(
-            n, k, message
-        )
-        subscription = self.create_subscription(
-            command_type, f"{base_topic}/command", callback, command_qos
-        )
-        self.actuator_publishers[name] = publisher
-        self.actuator_subscriptions[name] = subscription
         self.actuator_kinds[name] = kind
-        self.get_logger().info(f"Created {kind} actuator topics: {base_topic}")
-        return publisher
+        return self.actuator_publishers.get(kind)
 
-    def remove_actuator(self, name: str, reason: str) -> None:
-        publisher = self.actuator_publishers.pop(name, None)
-        subscription = self.actuator_subscriptions.pop(name, None)
-        self.actuator_kinds.pop(name, None)
-        self.actuator_last_seen.pop(name, None)
-        self.latched_separations.discard(name)
+    def reset_separation_state_publisher(self) -> None:
+        """Drop transient-local samples that belong to the previous vessel."""
+        publisher = self.actuator_publishers.pop("separation", None)
         if publisher is not None:
             self.destroy_publisher(publisher)
-        if subscription is not None:
-            self.destroy_subscription(subscription)
-        if publisher is not None or subscription is not None:
+        state_qos = QoSProfile(depth=10)
+        state_qos.reliability = ReliabilityPolicy.RELIABLE
+        state_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
+        base_topic = f"{self.actuators_prefix}/{self.ACTUATOR_TOPIC_NAMES['separation']}"
+        self.actuator_publishers["separation"] = self.create_publisher(
+            SeparationState, f"{base_topic}/state", state_qos
+        )
+
+    def remove_actuator(self, name: str, reason: str) -> None:
+        removed_kind = self.actuator_kinds.pop(name, None)
+        self.actuator_last_seen.pop(name, None)
+        self.latched_separations.discard(name)
+        if removed_kind is not None:
             self.get_logger().info(f"Removed actuator ({reason}): {name}")
 
     def apply_docking_port_manifest(self, packet: Dict[str, Any]) -> None:
@@ -1170,7 +1205,21 @@ class KerbalLidarUdpBridge(Node):
         except OSError as exc:
             self.get_logger().warning(f"Docking command UDP send failed: {exc}")
 
-    def send_typed_actuator_command(self, name: str, kind: str, message: Any) -> None:
+    def send_typed_actuator_command(self, kind: str, message: Any) -> None:
+        raw_id = getattr(message, "id", "")
+        if not isinstance(raw_id, str) or not raw_id.strip():
+            self.get_logger().warning(f"Dropped {kind} command without an actuator id")
+            return
+        name = sanitize_ros_name(raw_id, "")
+        if name == "_":
+            self.get_logger().warning(f"Dropped {kind} command with an invalid actuator id")
+            return
+        known_kind = self.actuator_kinds.get(name)
+        if known_kind is not None and known_kind != kind:
+            self.get_logger().warning(
+                f"Dropped {kind} command for {name}: actuator type is {known_kind}"
+            )
+            return
         self.command_sequence += 1
         if kind == "separation":
             try:
@@ -1303,6 +1352,7 @@ class KerbalLidarUdpBridge(Node):
             actuator = MotorState()
             actuator.header.stamp = stamp
             actuator.header.frame_id = "base_link"
+            actuator.id = state.name
             actuator.name = state.name
             actuator.motor_type = state.joint_type
             actuator.enabled = state.engaged

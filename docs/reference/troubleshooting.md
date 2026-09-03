@@ -10,7 +10,7 @@ source ~/ros2_ws/install/setup.bash
 ros2 run ksp_lidar_bridge udp_bridge --host 127.0.0.1 --port 49010
 ```
 
-別ターミナルでも同じROS setupとworkspaceをsourceしてください。`/ros2_ksp/bridge/status`はKSP未起動でも存在します。
+別ターミナルでも同じROS setupとworkspaceをsourceしてください。`/ros2_ksp/status`はKSP未起動でも存在します。
 
 `ROS_DISTRO`が`jazzy`にならない場合は、Humbleをsourceしたシェルを使い回さず、新しいターミナルで`/opt/ros/jazzy/setup.bash`からsourceし直してください。
 
@@ -36,7 +36,7 @@ ros2 run ksp_lidar_bridge udp_bridge \
 
 ## モーターが動かない
 
-- `/joint_states.name`から実際のjoint名をコピーする
+- `/ksp_vessel/joint_states.name`から実際のjoint名をコピーする
 - `JointTrajectory`の配列長を`joint_names`と一致させる
 - サーボはrad、リニアはmで指定する
 - `bottom`側を親、動かす構造を`top`側へ取り付ける
@@ -50,8 +50,8 @@ ros2 run ksp_lidar_bridge udp_bridge \
 ## RVizに機体が出ない
 
 ```bash
-ros2 topic echo --once /ros2_ksp/active_vessel/root_frame
-ros2 topic echo --once /ros2_ksp/active_vessel/robot_description
+ros2 topic echo --once /ksp_vessel/root_frame
+ros2 topic echo --once /ksp_vessel/robot_description
 ```
 
 空文字列の場合、モデルがclearまたは期限切れです。LiDARパーツの`activeVesselUrdfEnabled`、UDP経路、remote接続時の両側許可を確認してください。RVizのFixed Frameは`root_frame` Topicから得た値を使います。

@@ -15,7 +15,7 @@ _HEX_64 = re.compile(r"^[0-9a-f]{64}$")
 @dataclass(frozen=True)
 class CameraFrame:
     source: str
-    part_name: str
+    sensor_id: str
     part_flight_id: int
     universal_time: float
     width: int
@@ -26,6 +26,11 @@ class CameraFrame:
     frame_position: Tuple[float, float, float]
     frame_rotation: Tuple[float, float, float, float]
     data: bytes
+
+    @property
+    def part_name(self) -> str:
+        """Compatibility alias for callers written before explicit sensor IDs."""
+        return self.sensor_id
 
 
 @dataclass
@@ -50,7 +55,7 @@ class CameraFrameAssembler:
         self.max_chunks = max_chunks
         self.max_pending_frames = max_pending_frames
         self.timeout_sec = timeout_sec
-        self._pending: Dict[Tuple[str, int, int], _PendingFrame] = {}
+        self._pending: Dict[Tuple[str, int, int, str, str], _PendingFrame] = {}
 
     def consume(self, packet: Dict[str, Any], now: Optional[float] = None) -> Optional[CameraFrame]:
         timestamp = time.monotonic() if now is None else now
@@ -108,7 +113,7 @@ class CameraFrameAssembler:
 
         (
             source,
-            part_name,
+            sensor_id,
             part_flight_id,
             universal_time,
             width,
@@ -123,7 +128,7 @@ class CameraFrameAssembler:
         ) = metadata
         return CameraFrame(
             source=source,
-            part_name=part_name,
+            sensor_id=sensor_id,
             part_flight_id=part_flight_id,
             universal_time=universal_time,
             width=width,
@@ -187,7 +192,7 @@ class CameraFrameAssembler:
         source = str(packet.get("source") or "rgb_camera")
         if source not in ("rgb_camera", "docking_port"):
             raise ValueError("invalid camera source")
-        part_name = str(packet.get("partName") or "rgb_camera")
+        sensor_id = str(packet.get("sensorId") or packet.get("partName") or "rgb_camera")
         part_flight_id = _strict_int(packet.get("partFlightId", 0), "part flight ID", 0, 2**64 - 1)
         universal_time = _finite_float(packet.get("universalTime"), "universal time")
         vertical_fov = _finite_float(packet.get("verticalFovDeg"), "vertical FOV")
@@ -200,10 +205,10 @@ class CameraFrameAssembler:
             raise ValueError("camera frame rotation is invalid")
         frame_rotation = tuple(value / rotation_length for value in frame_rotation)
 
-        key = (session_id, sequence, part_flight_id, source, part_name)
+        key = (session_id, sequence, part_flight_id, source, sensor_id)
         metadata = (
             source,
-            part_name,
+            sensor_id,
             part_flight_id,
             universal_time,
             width,
@@ -221,7 +226,7 @@ class CameraFrameAssembler:
 
 def camera_topics(
     part_name: Any,
-    topic_prefix: str = "/ros2_ksp",
+    topic_prefix: str = "/ksp_vessel",
     source: str = "rgb_camera",
     docking_ports_prefix: Optional[str] = None,
 ) -> Tuple[str, str]:
@@ -239,7 +244,7 @@ def camera_topics(
         )
         base = f"{docking_prefix}/{name}/camera"
     elif source == "rgb_camera":
-        base = f"{prefix}/{name}/camera"
+        base = f"{prefix}/camera/{name}"
     else:
         raise ValueError("unsupported camera source")
     return f"{base}/image_raw", f"{base}/camera_info"

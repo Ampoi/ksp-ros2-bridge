@@ -6,14 +6,14 @@ Flight中のactive vesselにあるKSP標準`ModuleEngines` / `ModuleEnginesFX`�
 
 | 方向 | Topic | 型 | 内容 |
 |---|---|---|---|
-| 入力 | `/ros2_ksp/propulsion/command` | `std_msgs/msg/String` | モジュール別の起動・停止・推力・release |
-| 入力 | `/ros2_ksp/propulsion/main_throttle` | `std_msgs/msg/Float64` | メインスロットル`0.0..1.0` |
-| 入力 | `/ros2_ksp/propulsion/rcs_command` | `geometry_msgs/msg/Twist` | RCS 6軸入力、各`-1.0..1.0` |
-| 出力 | `/ros2_ksp/propulsion/state` | `std_msgs/msg/String` | 1モジュール1メッセージのJSON、10 Hz |
-| 入力 | `/actuators/<engine_name>/command` | `ksp_ros2_interfaces/msg/EngineCommand` | Engine単位の型付き指令 |
-| 出力 | `/actuators/<engine_name>/state` | `ksp_ros2_interfaces/msg/EngineState` | Engine単位の型付き状態 |
-| 入力 | `/actuators/<rcs_name>/command` | `ksp_ros2_interfaces/msg/RcsCommand` | RCS単位の型付き指令 |
-| 出力 | `/actuators/<rcs_name>/state` | `ksp_ros2_interfaces/msg/RcsState` | RCS単位の型付き状態 |
+| 入力 | `/ksp_vessel/actuators/propulsion/command` | `ksp_ros2_interfaces/msg/EngineCommand` | `id`で指定するEngine指令 |
+| 出力 | `/ksp_vessel/actuators/propulsion/state` | `ksp_ros2_interfaces/msg/EngineState` | `id`付きEngine状態 |
+| 入力 | `/ksp_vessel/actuators/rcs/command` | `ksp_ros2_interfaces/msg/RcsCommand` | `id`で指定するRCS指令 |
+| 出力 | `/ksp_vessel/actuators/rcs/state` | `ksp_ros2_interfaces/msg/RcsState` | `id`付きRCS状態 |
+| 入力 | `/ksp_vessel/actuators/propulsion/main_throttle` | `std_msgs/msg/Float64` | メインスロットル`0.0..1.0` |
+| 入力 | `/ksp_vessel/actuators/rcs/twist_command` | `geometry_msgs/msg/Twist` | RCS 6軸入力、各`-1.0..1.0` |
+| 入力 | `/ksp_vessel/actuators/propulsion/json_command` | `std_msgs/msg/String` | 互換用JSON指令 |
+| 出力 | `/ksp_vessel/actuators/propulsion/json_state` | `std_msgs/msg/String` | 互換用JSON状態、10 Hz |
 
 ## State JSON
 
@@ -40,7 +40,7 @@ Flight中のactive vesselにあるKSP標準`ModuleEngines` / `ModuleEnginesFX`�
 Engineには`engineId`、`operational`、`throttleable`、`throttle`が追加されます。RCSには`active`と`thrusterCount`が追加されます。
 
 ```bash
-ros2 topic echo /ros2_ksp/propulsion/state
+ros2 topic echo /ksp_vessel/actuators/propulsion/json_state
 ```
 
 ## 個別モジュール指令
@@ -48,7 +48,7 @@ ros2 topic echo /ros2_ksp/propulsion/state
 `String.data`にはJSON objectを入れます。複数moduleは`commands`配列へまとめられます。
 
 ```bash
-ros2 topic pub -r 5 /ros2_ksp/propulsion/command std_msgs/msg/String \
+ros2 topic pub -r 5 /ksp_vessel/actuators/propulsion/json_command std_msgs/msg/String \
   '{data: "{\"commands\":[{\"name\":\"engine_12345_0\",\"kind\":\"engine\",\"enabled\":true,\"throttle\":0.65}],\"timeout\":0.5}"}'
 ```
 
@@ -67,14 +67,14 @@ ros2 topic pub -r 5 /ros2_ksp/propulsion/command std_msgs/msg/String \
 全moduleのoverrideを解除します。
 
 ```bash
-ros2 topic pub --once /ros2_ksp/propulsion/command std_msgs/msg/String \
+ros2 topic pub --once /ksp_vessel/actuators/propulsion/json_command std_msgs/msg/String \
   '{data: "{\"commands\":[{\"name\":\"*\",\"release\":true}]}"}'
 ```
 
 ## メインスロットル
 
 ```bash
-ros2 topic pub -r 5 /ros2_ksp/propulsion/main_throttle \
+ros2 topic pub -r 5 /ksp_vessel/actuators/propulsion/main_throttle \
   std_msgs/msg/Float64 '{data: 0.8}'
 ```
 
@@ -83,7 +83,7 @@ ros2 topic pub -r 5 /ros2_ksp/propulsion/main_throttle \
 ## RCS 6軸
 
 ```bash
-ros2 topic pub -r 5 /ros2_ksp/propulsion/rcs_command \
+ros2 topic pub -r 5 /ksp_vessel/actuators/rcs/twist_command \
   geometry_msgs/msg/Twist \
   '{linear: {x: 0.0, y: 0.0, z: 1.0}, angular: {x: 0.0, y: 0.2, z: 0.0}}'
 ```
@@ -105,24 +105,26 @@ ros2 topic pub -r 5 /ros2_ksp/propulsion/rcs_command \
 
 ## 型付きEngine Topic
 
-`<engine_name>`は`engine_<persistentId>_<moduleIndex>`です。commandはReliable、stateはBest Effortで、どちらもdepth 10です。
+Engine IDは`engine_<persistentId>_<moduleIndex>`です。commandはReliable、stateはBest Effortで、どちらもdepth 10です。
 
 | EngineCommand field | 単位 | 内容 |
 |---|---|---|
 | `header` | — | 現行bridgeでは指令変換に使用しない |
+| `id` | — | 対象Engine ID |
 | `enabled` | — | Engineの起動状態 |
 | `target_thrust` | N | 目標推力 |
 | `timeout_sec` | s | override時間。0ならbridge既定値 |
 
 ```bash
-ros2 topic pub -r 5 /actuators/engine_12345_0/command \
+ros2 topic pub -r 5 /ksp_vessel/actuators/propulsion/command \
   ksp_ros2_interfaces/msg/EngineCommand \
-  "{enabled: true, target_thrust: 50.0, timeout_sec: 0.5}"
+  "{id: engine_12345_0, enabled: true, target_thrust: 50.0, timeout_sec: 0.5}"
 ```
 
 | EngineState field | 単位 | 内容 |
 |---|---|---|
 | `header` | — | bridge受信時刻、`frame_id = base_link` |
+| `id` | — | Engine ID |
 | `name` | — | アクチュエータ名 |
 | `enabled` / `operational` / `flameout` | — | KSP module状態 |
 | `throttle` | 0.0..1.0 | 現在スロットル |
@@ -131,24 +133,26 @@ ros2 topic pub -r 5 /actuators/engine_12345_0/command \
 
 ## 型付きRCS Topic
 
-`<rcs_name>`は`rcs_<persistentId>_<moduleIndex>`です。QoSはEngineと同じです。
+RCS IDは`rcs_<persistentId>_<moduleIndex>`です。QoSはEngineと同じです。
 
 | RcsCommand field | 単位 | 内容 |
 |---|---|---|
 | `header` | — | 現行bridgeでは指令変換に使用しない |
+| `id` | — | 対象RCS ID |
 | `enabled` | — | RCS moduleの有効状態 |
 | `thrust_limit` | N | moduleの推力上限 |
 | `timeout_sec` | s | override時間。0ならbridge既定値 |
 
 ```bash
-ros2 topic pub -r 5 /actuators/rcs_12345_1/command \
+ros2 topic pub -r 5 /ksp_vessel/actuators/rcs/command \
   ksp_ros2_interfaces/msg/RcsCommand \
-  "{enabled: true, thrust_limit: 2.0, timeout_sec: 0.5}"
+  "{id: rcs_12345_1, enabled: true, thrust_limit: 2.0, timeout_sec: 0.5}"
 ```
 
 | RcsState field | 単位 | 内容 |
 |---|---|---|
 | `header` | — | bridge受信時刻、`frame_id = base_link` |
+| `id` | — | RCS ID |
 | `name` | — | アクチュエータ名 |
 | `enabled` / `active` / `flameout` | — | KSP module状態 |
 | `thrust` / `max_thrust` / `thrust_limit` | N | 現在推力、最大推力、現在上限 |

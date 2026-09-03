@@ -2,13 +2,15 @@
 
 `Kerbal ROS2 RGB Camera`はFlight描画をraw RGBフレームとして取得します。KSPからはチェックサム付きUDPチャンクで送り、bridgeは全チャンクが揃ってSHA-256検証に成功したフレームだけをpublishします。
 
+画像はKSPの銀河背景、Scaled Space、Flightの近距離／遠距離カメラをセンサー視点で合成します。画面UIは含みません。描画先はフレームごとにクリアされるため、空や背景が前フレームの透明画素として残ることはありません。
+
 ## 入出力Topic
 
 | 方向 | Topic | 型 | 内容 |
 |---|---|---|---|
 | 入力 | なし | — | ROS2からのカメラ制御Topicはありません |
-| 出力 | `/ros2_ksp/<part_name>/camera/image_raw` | `sensor_msgs/msg/Image` | raw RGB画像 |
-| 出力 | `/ros2_ksp/<part_name>/camera/camera_info` | `sensor_msgs/msg/CameraInfo` | 内部パラメーター |
+| 出力 | `/ksp_vessel/camera/<camera_id>/image_raw` | `sensor_msgs/msg/Image` | raw RGB画像 |
+| 出力 | `/ksp_vessel/camera/<camera_id>/camera_info` | `sensor_msgs/msg/CameraInfo` | 内部パラメーター |
 
 ## Image
 
@@ -21,8 +23,8 @@
 | `header` | CameraInfoと同じstamp / frame_id |
 
 ```bash
-ros2 topic hz /ros2_ksp/rgb_camera/camera/image_raw
-ros2 run rqt_image_view rqt_image_view /ros2_ksp/rgb_camera/camera/image_raw
+ros2 topic hz /ksp_vessel/camera/orbit_camera/image_raw
+ros2 run rqt_image_view rqt_image_view /ksp_vessel/camera/orbit_camera/image_raw
 ```
 
 ## CameraInfo
@@ -36,7 +38,7 @@ ros2 run rqt_image_view rqt_image_view /ros2_ksp/rgb_camera/camera/image_raw
 - stereo baselineは0
 
 ```bash
-ros2 topic echo --once /ros2_ksp/rgb_camera/camera/camera_info
+ros2 topic echo --once /ksp_vessel/camera/orbit_camera/camera_info
 ```
 
 ## 既定設定と操作
@@ -53,6 +55,8 @@ ros2 topic echo --once /ros2_ksp/rgb_camera/camera/camera_info
 
 Part Action Windowには160 × 120、320 × 240、640 × 480の解像度presetがあり、frame rateとFOVも変更できます。
 
+VAB/SPHの`Edit ROS2 Sensor ID`で`<camera_id>`を設定します。新規パーツには`camera_<8桁UID>`が自動設定され、UDPの`sensorId`としてbridgeへ渡されます。
+
 ## Frame
 
 camera frameはREP-103 optical規約です。
@@ -64,7 +68,7 @@ camera frameはREP-103 optical規約です。
 active vesselモデルへ接続できる場合は対応linkの子`camera_optical_frame`になります。モデルがない場合のfallbackは次です。
 
 ```text
-<frame_prefix>_<part_name>_camera_optical_frame
+<frame_prefix>_<camera_id>_camera_optical_frame
 ```
 
 ## 欠落フレーム

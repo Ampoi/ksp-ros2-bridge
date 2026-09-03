@@ -23,7 +23,8 @@ ros2 run ksp_lidar_bridge udp_bridge --host 127.0.0.1 --port 49010
 
 | 引数 | 既定値 | 内容 |
 |---|---|---|
-| `--topic-prefix` | `/ros2_ksp` | センサーTopicとbridge statusのprefix |
+| `--topic-prefix` | `/ksp_vessel` | 機体センサーTopicのprefix |
+| `--bridge-prefix` | `/ros2_ksp` | bridge statusのprefix |
 | `--frame-prefix` | `ros2_ksp` | model未接続時のセンサーframe prefix |
 | `--topic-timeout-sec` | `3.0` | 最終データ受信から動的publisherを削除する秒数 |
 | `--docking-ports-prefix` | `<topic-prefix>/docking_ports` | ドッキングポートstate/command/cameraのprefix |
@@ -34,8 +35,8 @@ ros2 run ksp_lidar_bridge udp_bridge --host 127.0.0.1 --port 49010
 
 | 引数 | 既定値 | 内容 |
 |---|---|---|
-| `--robot-description-topic` | `/ros2_ksp/active_vessel/robot_description` | URDF Topic |
-| `--root-frame-topic` | `/ros2_ksp/active_vessel/root_frame` | root frame Topic |
+| `--robot-description-topic` | `/ksp_vessel/robot_description` | URDF Topic |
+| `--root-frame-topic` | `/ksp_vessel/root_frame` | root frame Topic |
 | `--model-tf-rate` | `5.0` | 固定joint TFのpublish Hz。内部で0.5〜60 Hzへclamp |
 | `--allow-remote-models` | 無効 | 非loopbackからのモデルパケットを許可 |
 
@@ -43,18 +44,18 @@ ros2 run ksp_lidar_bridge udp_bridge --host 127.0.0.1 --port 49010
 
 | 引数 | 既定値 |
 |---|---|
-| `--motor-command-topic` | `/ros2_ksp/motors/command` |
-| `--joint-states-topic` | `/joint_states` |
-| `--diagnostics-topic` | `/diagnostics` |
+| `--motor-command-topic` | `/ksp_vessel/actuators/servo/trajectory` |
+| `--joint-states-topic` | `/ksp_vessel/joint_states` |
+| `--diagnostics-topic` | `/ros2_ksp/diagnostics` |
 
 ## 推進系Topicとtimeout
 
 | 引数 | 既定値 |
 |---|---|
-| `--propulsion-command-topic` | `/ros2_ksp/propulsion/command` |
-| `--propulsion-state-topic` | `/ros2_ksp/propulsion/state` |
-| `--main-throttle-topic` | `/ros2_ksp/propulsion/main_throttle` |
-| `--rcs-command-topic` | `/ros2_ksp/propulsion/rcs_command` |
+| `--propulsion-command-topic` | `/ksp_vessel/actuators/propulsion/json_command` |
+| `--propulsion-state-topic` | `/ksp_vessel/actuators/propulsion/json_state` |
+| `--main-throttle-topic` | `/ksp_vessel/actuators/propulsion/main_throttle` |
+| `--rcs-command-topic` | `/ksp_vessel/actuators/rcs/twist_command` |
 | `--propulsion-timeout-sec` | `0.5` |
 
 `--propulsion-timeout-sec`はFloat64メインスロットルとTwist RCS指令に付与するKSP側フェイルセーフ時間です。有限の正数のみ受け付けます。String JSON指令はpayloadの`timeout`で0.05〜10秒を指定します。
@@ -63,9 +64,9 @@ ros2 run ksp_lidar_bridge udp_bridge --host 127.0.0.1 --port 49010
 
 | 引数 | 既定値 | 内容 |
 |---|---|---|
-| `--body-wrench-topic` | `/body_wrench` | 機体Wrench入力Topic |
-| `--ground-truth-prefix` | `/ground_truth` | pose / twist / accelerationのprefix |
-| `--actuators-prefix` | `/actuators` | 動的な型付きアクチュエータTopicのprefix |
+| `--body-wrench-topic` | `/ksp_vessel/body_wrench` | 機体Wrench入力Topic |
+| `--ground-truth-prefix` | `/ksp_vessel/ground_truth` | pose / twist / accelerationのprefix |
+| `--actuators-prefix` | `/ksp_vessel/actuators` | 種類別の型付きアクチュエータTopicのprefix |
 | `--vehicle-command-timeout-sec` | `0.5` | Body Wrenchと型付きcommandの既定timeout |
 
 `--vehicle-command-timeout-sec`は有限の正数のみ受け付けます。ホイール、Engine、RCS、モーターの型付きcommandで`timeout_sec`に0以外を指定すると、その値を優先します。KSP側では0.05〜10秒へclampされます。不可逆な`SeparationCommand`にはtimeoutはありません。
@@ -76,13 +77,14 @@ ros2 run ksp_lidar_bridge udp_bridge --host 127.0.0.1 --port 49010
 ros2 run ksp_lidar_bridge udp_bridge \
   --host 127.0.0.1 \
   --topic-prefix /my_rover \
-  --motor-command-topic /my_rover/motors/command \
+  --bridge-prefix /my_bridge \
+  --motor-command-topic /my_rover/actuators/servo/trajectory \
   --joint-states-topic /my_rover/joint_states \
-  --diagnostics-topic /my_rover/diagnostics \
-  --propulsion-command-topic /my_rover/propulsion/command \
-  --propulsion-state-topic /my_rover/propulsion/state \
-  --main-throttle-topic /my_rover/propulsion/main_throttle \
-  --rcs-command-topic /my_rover/propulsion/rcs_command \
+  --diagnostics-topic /my_bridge/diagnostics \
+  --propulsion-command-topic /my_rover/actuators/propulsion/json_command \
+  --propulsion-state-topic /my_rover/actuators/propulsion/json_state \
+  --main-throttle-topic /my_rover/actuators/propulsion/main_throttle \
+  --rcs-command-topic /my_rover/actuators/rcs/twist_command \
   --body-wrench-topic /my_rover/body_wrench \
   --ground-truth-prefix /my_rover/ground_truth \
   --actuators-prefix /my_rover/actuators \

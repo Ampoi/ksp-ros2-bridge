@@ -1,0 +1,53 @@
+# 2D LiDAR MappingとNav2
+
+`ksp_nav2_bringup`は、2D LiDARだけからscan-to-scan odometryを推定し、SLAM ToolboxとNav2へ渡す独立パッケージです。KSP modと`ksp_lidar_bridge`にはNav2固有コードを入れていません。
+
+## 構成
+
+| 段階 | 入出力 | 役割 |
+|---|---|---|
+| LiDAR odometry | `LaserScan` → `/ksp_nav2/odom` | 連続スキャンのICPで平面移動量を推定 |
+| Mapping | `/ksp_nav2/scan` + LiDAR odometry → `/map` | SLAM Toolboxによる地図生成とloop closure |
+| Localization | 保存地図 + `/ksp_nav2/scan` → `map -> lidar_odom` | AMCLによる自己位置推定 |
+| Navigation | map / costmap / odometry → `/cmd_vel` | Nav2の経路計画と追従 |
+| KSP制御 | `/cmd_vel` → `/ksp_vessel/body_wrench` | 平面速度誤差をforce / yaw torqueへ変換 |
+
+Nav2のTFは`map -> lidar_odom -> nav_base_link`です。bridgeのGround Truth TopicとTFは購読しないため、自己位置推定へ真値は混ざりません。
+
+## インストールと起動
+
+```bash
+sudo apt install ros-jazzy-navigation2 ros-jazzy-nav2-bringup ros-jazzy-slam-toolbox
+./dev_sync.sh --skip-ksp-build --skip-ksp-sync
+```
+
+bridgeとKSP Flightを起動した後、実際のSensor IDを指定します。
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source ~/ros2_ws/install/setup.bash
+ros2 launch ksp_nav2_bringup mapping.launch.py \
+  scan_topic:=/ksp_vessel/lidar_2d/front_lidar/scan
+```
+
+RViz2の`Nav2 Goal`で目的位置を送れます。作成した地図の保存:
+
+```bash
+ros2 run nav2_map_server map_saver_cli -f "$PWD/ksp_map"
+```
+
+保存地図を使う場合:
+
+```bash
+ros2 launch ksp_nav2_bringup navigation.launch.py \
+  scan_topic:=/ksp_vessel/lidar_2d/front_lidar/scan \
+  map:="$PWD/ksp_map.yaml"
+```
+
+この場合はRViz2の`2D Pose Estimate`で初期位置を与えてから`Nav2 Goal`を使います。
+
+## 機体別の調整
+
+設定は`ksp_nav2_bringup/params/nav2_params.yaml`にまとまっています。機体寸法に合わせて`robot_radius`、推進力に合わせてcontrollerのgainとforce / torque上限、運動性能に合わせてDWBの速度・加速度上限を調整します。
+
+LiDARの+Xが機体`base_link`の+Xと異なる場合、`nav_to_body_yaw`へLiDAR座標から機体座標へのyaw回転[rad]を設定します。Nav2は2DなのでLiDARは水平固定が前提で、高度・roll・pitchは別の飛行制御系が担当します。

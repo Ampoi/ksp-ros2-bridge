@@ -1,4 +1,5 @@
 std_msgs/Header header
+string id
 uint8 MODE_POSITION=0
 uint8 MODE_VELOCITY=1
 uint8 MODE_EFFORT=2

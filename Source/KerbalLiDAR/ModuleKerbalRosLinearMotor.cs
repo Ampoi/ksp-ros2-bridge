@@ -139,6 +139,8 @@ namespace KerbalLiDAR
                 return;
             }
 
+            KerbalRosMotorCollisions.EnableBetweenConnectedParts(part, drivenPart, joint);
+
             referenceLocalDrivenPosition = part.transform.InverseTransformPoint(drivenPart.transform.position);
             referenceExtension = targetExtension;
             currentExtension = referenceExtension;

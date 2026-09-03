@@ -383,6 +383,87 @@ namespace KerbalLiDAR
         {
             const int maximumGeometriesPerPart = 48;
             var geometries = new List<ProxyGeometry>();
+
+            AppendRendererProxyGeometries(geometries, vesselPart, maximumGeometriesPerPart);
+            if (geometries.Count > 0)
+            {
+                return geometries;
+            }
+
+            AppendColliderProxyGeometries(geometries, vesselPart, maximumGeometriesPerPart);
+            if (geometries.Count == 0)
+            {
+                geometries.Add(new ProxyGeometry
+                {
+                    Type = ProxyGeometryType.Box,
+                    Center = Vector3.zero,
+                    Rotation = Quaternion.identity,
+                    Size = Vector3.one * 0.25f
+                });
+            }
+
+            return geometries;
+        }
+
+        private static void AppendRendererProxyGeometries(
+            IList<ProxyGeometry> geometries,
+            Part vesselPart,
+            int maximumGeometries
+        )
+        {
+            var renderers = vesselPart.GetComponentsInChildren<Renderer>(true);
+            foreach (var renderer in renderers)
+            {
+                if (
+                    renderer == null
+                    || !renderer.enabled
+                    || !renderer.gameObject.activeInHierarchy
+                    || FindPart(renderer.transform) != vesselPart
+                    || geometries.Count >= maximumGeometries
+                )
+                {
+                    continue;
+                }
+
+                var meshRenderer = renderer as MeshRenderer;
+                if (meshRenderer != null)
+                {
+                    var meshFilter = meshRenderer.GetComponent<MeshFilter>();
+                    if (meshFilter != null && meshFilter.sharedMesh != null)
+                    {
+                        AppendMeshProxyGeometry(
+                            geometries,
+                            vesselPart.transform,
+                            meshFilter.transform,
+                            meshFilter.sharedMesh,
+                            meshFilter.sharedMesh.bounds,
+                            maximumGeometries
+                        );
+                    }
+                    continue;
+                }
+
+                var skinnedRenderer = renderer as SkinnedMeshRenderer;
+                if (skinnedRenderer != null && skinnedRenderer.sharedMesh != null)
+                {
+                    AppendMeshProxyGeometry(
+                        geometries,
+                        vesselPart.transform,
+                        skinnedRenderer.transform,
+                        skinnedRenderer.sharedMesh,
+                        skinnedRenderer.localBounds,
+                        maximumGeometries
+                    );
+                }
+            }
+        }
+
+        private static void AppendColliderProxyGeometries(
+            IList<ProxyGeometry> geometries,
+            Part vesselPart,
+            int maximumGeometries
+        )
+        {
             var colliders = vesselPart.GetComponentsInChildren<Collider>();
             foreach (var collider in colliders)
             {
@@ -390,7 +471,7 @@ namespace KerbalLiDAR
                     collider == null
                     || !collider.enabled
                     || FindPart(collider) != vesselPart
-                    || geometries.Count >= maximumGeometriesPerPart
+                    || geometries.Count >= maximumGeometries
                 )
                 {
                     continue;
@@ -413,29 +494,23 @@ namespace KerbalLiDAR
                 var capsule = collider as CapsuleCollider;
                 if (capsule != null)
                 {
-                    AppendCapsuleGeometries(geometries, vesselPart.transform, capsule, maximumGeometriesPerPart);
+                    AppendCapsuleGeometries(geometries, vesselPart.transform, capsule, maximumGeometries);
                     continue;
                 }
 
                 var mesh = collider as MeshCollider;
                 if (mesh != null && mesh.sharedMesh != null)
                 {
-                    AppendMeshProxyGeometry(geometries, vesselPart.transform, mesh, maximumGeometriesPerPart);
+                    AppendMeshProxyGeometry(
+                        geometries,
+                        vesselPart.transform,
+                        mesh.transform,
+                        mesh.sharedMesh,
+                        mesh.sharedMesh.bounds,
+                        maximumGeometries
+                    );
                 }
             }
-
-            if (geometries.Count == 0)
-            {
-                geometries.Add(new ProxyGeometry
-                {
-                    Type = ProxyGeometryType.Box,
-                    Center = Vector3.zero,
-                    Rotation = Quaternion.identity,
-                    Size = Vector3.one * 0.25f
-                });
-            }
-
-            return geometries;
         }
 
         private static ProxyGeometry CreateBoxGeometry(
@@ -532,7 +607,9 @@ namespace KerbalLiDAR
         private static void AppendMeshProxyGeometry(
             IList<ProxyGeometry> geometries,
             Transform partTransform,
-            MeshCollider mesh,
+            Transform meshTransform,
+            Mesh mesh,
+            Bounds bounds,
             int maximumGeometries
         )
         {
@@ -541,12 +618,11 @@ namespace KerbalLiDAR
                 return;
             }
 
-            var bounds = mesh.sharedMesh.bounds;
-            var size = Vector3.Scale(AbsVector(bounds.size), RelativeScale(partTransform, mesh.transform));
-            var center = partTransform.InverseTransformPoint(mesh.transform.TransformPoint(bounds.center));
-            var rotation = RelativeRotation(partTransform, mesh.transform);
+            var size = Vector3.Scale(AbsVector(bounds.size), RelativeScale(partTransform, meshTransform));
+            var center = partTransform.InverseTransformPoint(meshTransform.TransformPoint(bounds.center));
+            var rotation = RelativeRotation(partTransform, meshTransform);
             int cylinderAxis;
-            var geometryType = SelectMeshProxyGeometry(mesh.sharedMesh, size, out cylinderAxis);
+            var geometryType = SelectMeshProxyGeometry(mesh, size, out cylinderAxis);
             if (geometryType == ProxyGeometryType.Sphere)
             {
                 geometries.Add(new ProxyGeometry
@@ -584,6 +660,23 @@ namespace KerbalLiDAR
                 Rotation = rotation,
                 Size = MaxVector(size, Vector3.one * 0.01f)
             });
+        }
+
+        private static Part FindPart(Transform transform)
+        {
+            var current = transform;
+            while (current != null)
+            {
+                var owner = current.GetComponent<Part>();
+                if (owner != null)
+                {
+                    return owner;
+                }
+
+                current = current.parent;
+            }
+
+            return null;
         }
 
         private static ProxyGeometryType SelectMeshProxyGeometry(

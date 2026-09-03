@@ -107,6 +107,28 @@ namespace KerbalLiDAR
         }
     }
 
+    internal static class KerbalRosMotorCollisions
+    {
+        public static void EnableBetweenConnectedParts(Part motorPart, Part drivenPart, ConfigurableJoint joint)
+        {
+            if (motorPart == null || drivenPart == null || joint == null)
+            {
+                return;
+            }
+
+            // KSP ignores a same-vessel collider pair unless both owning parts
+            // opt in. Unity also suppresses contact between the two rigidbodies
+            // connected by a Joint unless enableCollision is set.
+            joint.enableCollision = true;
+            motorPart.sameVesselCollision = true;
+            drivenPart.sameVesselCollision = true;
+
+            // ModuleJointMotor initializes after KSP has built its collider
+            // ignore table, so request a refresh for already-loaded vessels.
+            motorPart.ResetCollisionIgnores();
+        }
+    }
+
     internal static class KerbalRosMotorVisuals
     {
         public static Transform EnsureTransform(Part part, string transformName)

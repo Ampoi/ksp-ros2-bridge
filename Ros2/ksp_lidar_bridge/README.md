@@ -6,27 +6,25 @@ kRPCは使用しません。このbridgeはKerbalLiDAR KSPプラグインと直�
 
 - 2D LiDAR: `sensor_msgs/msg/LaserScan`
 - 3D LiDAR: `sensor_msgs/msg/PointCloud2`
-- 2D Topic: `/ros2_ksp/<sensor_id>/lidar/scan`
-- 3D Topic: `/ros2_ksp/<sensor_id>/lidar/points`
-- RGB image: `/ros2_ksp/<sensor_id>/camera/image_raw` (`sensor_msgs/msg/Image`, `rgb8`)
-- Camera calibration: `/ros2_ksp/<sensor_id>/camera/camera_info` (`sensor_msgs/msg/CameraInfo`)
-- Bridge status: `/ros2_ksp/bridge/status`
-- Active vessel URDF: `/ros2_ksp/active_vessel/robot_description`
-- Active vessel root frame: `/ros2_ksp/active_vessel/root_frame`
+- 2D Topic: `/ksp_vessel/lidar_2d/<sensor_id>/scan`
+- 3D Topic: `/ksp_vessel/lidar_3d/<sensor_id>/points`
+- RGB image: `/ksp_vessel/camera/<sensor_id>/image_raw` (`sensor_msgs/msg/Image`, `rgb8`)
+- Camera calibration: `/ksp_vessel/camera/<sensor_id>/camera_info` (`sensor_msgs/msg/CameraInfo`)
+- Bridge status: `/ros2_ksp/status`
+- Active vessel URDF: `/ksp_vessel/robot_description`
+- Active vessel root frame: `/ksp_vessel/root_frame`
 - Active vessel fixed-joint transforms: `/tf`
-- Motor command: `/ros2_ksp/motors/command` (`trajectory_msgs/msg/JointTrajectory`)
-- Motor state: `/joint_states` (`sensor_msgs/msg/JointState`)
-- Motor diagnostics/current estimate: `/diagnostics` (`diagnostic_msgs/msg/DiagnosticArray`)
-- Propulsion state: `/ros2_ksp/propulsion/state` (`std_msgs/msg/String`)
-- Per-module propulsion command: `/ros2_ksp/propulsion/command` (`std_msgs/msg/String`)
-- Main throttle: `/ros2_ksp/propulsion/main_throttle` (`std_msgs/msg/Float64`)
-- RCS 6-axis command: `/ros2_ksp/propulsion/rcs_command` (`geometry_msgs/msg/Twist`)
-- Body wrench: `/body_wrench` (`geometry_msgs/msg/WrenchStamped`、`base_link`)
-- Ground truth: `/ground_truth/{pose,twist,acceleration}`
-- Typed actuators: `/actuators/<name>/{command,state}`
+- Motor trajectory: `/ksp_vessel/actuators/servo/trajectory` (`trajectory_msgs/msg/JointTrajectory`)
+- Motor state: `/ksp_vessel/joint_states` (`sensor_msgs/msg/JointState`)
+- Motor diagnostics/current estimate: `/ros2_ksp/diagnostics` (`diagnostic_msgs/msg/DiagnosticArray`)
+- Typed actuators: `/ksp_vessel/actuators/<type>/{command,state}`（commandの`id`で対象指定）
+- Main throttle: `/ksp_vessel/actuators/propulsion/main_throttle` (`std_msgs/msg/Float64`)
+- RCS 6-axis command: `/ksp_vessel/actuators/rcs/twist_command` (`geometry_msgs/msg/Twist`)
+- Body wrench: `/ksp_vessel/body_wrench` (`geometry_msgs/msg/WrenchStamped`、`base_link`)
+- Ground truth: `/ksp_vessel/ground_truth/{pose,twist,acceleration}`
 - Separation actuators: `SeparationCommand/State` for stock decouplers and procedural fairings
-- Docking ports: `/ros2_ksp/docking_ports/<name>/{state,command}` (`DockingPortState/Command`)
-- Selected docking camera: `/ros2_ksp/docking_ports/<name>/camera/{image_raw,camera_info}`
+- Docking ports: `/ksp_vessel/docking_ports/<id>/{state,command}` (`DockingPortState/Command`)
+- Selected docking camera: `/ksp_vessel/docking_ports/<id>/camera/{image_raw,camera_info}`
 
 TopicはKSPのFlight中にスキャンを受信したときだけ作成されます。Flightを終了するとKSPからの停止通知で削除され、通知を受け取れなかった場合もスキャン停止から3秒後に自動削除されます。再びFlightへ入ると、最初のスキャン受信時に自動で再作成されます。
 
@@ -57,7 +55,7 @@ Humbleでビルド済みのworkspaceを使う場合は、Python 3.10向けの`bu
 ros2 run ksp_lidar_bridge udp_bridge --host 127.0.0.1 --port 49010
 ```
 
-通常は`ROS_LOCALHOST_ONLY`の設定やROS2 daemonの再起動は不要です。起動直後から`/ros2_ksp/bridge/status`が作成されるため、KSPが未起動でも通常の`ros2 topic list`でbridgeを確認できます。LiDAR固有Topicは名前と2D/3D種別を最初のUDPスキャンから決定するため、Flight中にスキャンを受信した後に作成されます。
+通常は`ROS_LOCALHOST_ONLY`の設定やROS2 daemonの再起動は不要です。起動直後から`/ros2_ksp/status`が作成されるため、KSPが未起動でも通常の`ros2 topic list`でbridgeを確認できます。LiDAR固有TopicはIDと2D/3D種別を最初のUDPスキャンから決定するため、Flight中にスキャンを受信した後に作成されます。
 
 停止通知が欠落した場合のTopic削除時間は`--topic-timeout-sec`で変更できます（デフォルト3秒）。LiDARの最低スキャン周期より長い正の値を指定してください。
 
@@ -71,23 +69,23 @@ ros2 run ksp_lidar_bridge udp_bridge --command-host 192.168.1.50 --command-port 
 
 ```bash
 ros2 topic list
-ros2 topic echo --once /ros2_ksp/bridge/status
-ros2 topic echo /ros2_ksp/front_lidar/lidar/scan
-ros2 topic echo --once /ros2_ksp/rgb_camera/camera/camera_info
-ros2 topic echo --once /ros2_ksp/active_vessel/root_frame
-ros2 topic echo /joint_states
-ros2 topic echo /diagnostics
-ros2 topic echo /ros2_ksp/propulsion/state
+ros2 topic echo --once /ros2_ksp/status
+ros2 topic echo /ksp_vessel/lidar_2d/front_lidar/scan
+ros2 topic echo --once /ksp_vessel/camera/rgb_camera/camera_info
+ros2 topic echo --once /ksp_vessel/root_frame
+ros2 topic echo /ksp_vessel/joint_states
+ros2 topic echo /ros2_ksp/diagnostics
+ros2 topic echo /ksp_vessel/actuators/propulsion/state
 ```
 
 `<sensor_id>`はVAB/SPHのセンサーパーツ右クリックメニューにある`Edit ROS2 Sensor ID`で設定します。LiDARとRGBカメラだけが編集可能なIDを持ち、新規パーツには種類付き8桁UIDが自動設定されます。Topicルートを変更する場合は`--topic-prefix`を指定してください。
 
 ## Vehicle wrench, ground truth, and typed actuators
 
-`/body_wrench`は`base_link`（+X前、+Y左、+Z上）のN/N·m要求です。KSPの剛体へ直接Forceを加えず、接地ホイール、作動中の主エンジン、RCSへ飽和付きで配分します。既定0.5秒でタイムアウトします。
+`/ksp_vessel/body_wrench`は`base_link`（+X前、+Y左、+Z上）のN/N·m要求です。KSPの剛体へ直接Forceを加えず、接地ホイール、作動中の主エンジン、RCSへ飽和付きで配分します。既定0.5秒でタイムアウトします。
 
 ```bash
-ros2 topic pub -r 10 /body_wrench geometry_msgs/msg/WrenchStamped \
+ros2 topic pub -r 10 /ksp_vessel/body_wrench geometry_msgs/msg/WrenchStamped \
   "{header: {frame_id: base_link}, wrench: {force: {x: 1000.0}, torque: {z: 100.0}}}"
 ```
 
@@ -112,29 +110,29 @@ KSPからbridgeへのモデル経路は既定でfail-closedです。KSP側の`ud
 
 ## Motor control
 
-サーボを90度へ動かす例（`servo_12345`は`/joint_states.name`で確認）:
+サーボを90度へ動かす例（`servo_12345`は`/ksp_vessel/joint_states.name`で確認）:
 
 ```bash
-ros2 topic pub --once /ros2_ksp/motors/command trajectory_msgs/msg/JointTrajectory \
+ros2 topic pub --once /ksp_vessel/actuators/servo/trajectory trajectory_msgs/msg/JointTrajectory \
   "{joint_names: [servo_12345], points: [{positions: [1.5708], velocities: [0.5], effort: [100.0]}]}"
 ```
 
 単位はROS規約に合わせ、回転位置/速度/effortがrad・rad/s・N·m、直動位置/速度/effortがm・m/s・Nです。`JointTrajectoryPoint.time_from_start`付きの複数pointにも対応します。新しいtrajectoryは未送信の古いtrajectoryを置き換えます。
 
-`/diagnostics`の`estimated_current_a`はKSP側の推定モーター出力とパーツ設定のトルク定数/推力定数から計算した値です。KSPには実電流センサーがないため、実測値ではありません。
+`/ros2_ksp/diagnostics`の`estimated_current_a`はKSP側の推定モーター出力とパーツ設定のトルク定数/推力定数から計算した値です。KSPには実電流センサーがないため、実測値ではありません。
 
 ## Propulsion control
 
-KSP側はactive vesselの標準`ModuleEngines` / `ModuleEnginesFX`と`ModuleRCS` / `ModuleRCSFX`を自動検出します。`/ros2_ksp/propulsion/state`のJSONにある`name`を使い、複数モジュールを1回のcommandへまとめられます。
+KSP側はactive vesselの標準`ModuleEngines` / `ModuleEnginesFX`と`ModuleRCS` / `ModuleRCSFX`を自動検出します。型付きcommandは`id`で対象を指定し、JSON APIでは複数モジュールを1回のcommandへまとめられます。
 
 ```bash
-ros2 topic pub -r 5 /ros2_ksp/propulsion/command std_msgs/msg/String \
+ros2 topic pub -r 5 /ksp_vessel/actuators/propulsion/json_command std_msgs/msg/String \
   '{data: "{\"commands\":[{\"name\":\"engine_12345_0\",\"enabled\":true,\"throttle\":0.65}],\"timeout\":0.5}"}'
 
-ros2 topic pub -r 5 /ros2_ksp/propulsion/main_throttle std_msgs/msg/Float64 \
+ros2 topic pub -r 5 /ksp_vessel/actuators/propulsion/main_throttle std_msgs/msg/Float64 \
   '{data: 0.8}'
 
-ros2 topic pub -r 5 /ros2_ksp/propulsion/rcs_command geometry_msgs/msg/Twist \
+ros2 topic pub -r 5 /ksp_vessel/actuators/rcs/twist_command geometry_msgs/msg/Twist \
   '{linear: {x: 0.0, y: 0.0, z: 1.0}, angular: {x: 0.0, y: 0.2, z: 0.0}}'
 ```
 
