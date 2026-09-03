@@ -13,7 +13,7 @@ kRPCは使用しません。このbridgeはKerbalLiDAR KSPプラグインと直�
 - Bridge status: `/ros2_ksp/status`
 - Active vessel URDF: `/ksp_vessel/robot_description`
 - Active vessel root frame: `/ksp_vessel/root_frame`
-- Active vessel fixed-joint transforms: `/tf`
+- Active vessel pose tree (`base_link` → proxy root → fixed joints): `/tf`
 - Motor trajectory: `/ksp_vessel/actuators/servo/trajectory` (`trajectory_msgs/msg/JointTrajectory`)
 - Motor state: `/ksp_vessel/joint_states` (`sensor_msgs/msg/JointState`)
 - Motor diagnostics/current estimate: `/ros2_ksp/diagnostics` (`diagnostic_msgs/msg/DiagnosticArray`)
@@ -95,7 +95,7 @@ Flight中に検出された各ホイール、Engine、RCS、ROSモーター、�
 
 ## Active vessel runtime proxy
 
-URDFは`std_msgs/msg/String`をtransient-local QoSでpublishします。bridgeはURDFの固定ジョイントを`/tf`へ既定5Hzでpublishするため、RViz2のRobotModelで直接表示できます。操作機体の構成・相対姿勢が変わるとモデルは更新され、KSPからの再送が途絶えると自動的に期限切れになります。LiDARパケットの`partFlightId`がモデル内にある場合、対応linkの子にスキャン原点・姿勢を表すLiDAR frameを配信し、2D/3Dメッセージの`frame_id`をそのframeへ揃えます。
+URDFは`std_msgs/msg/String`をtransient-local QoSでpublishします。bridgeはKSPから受け取ったCoM基準のルートパーツ姿勢を使って`base_link`からプロキシrootへのTFを配信し、続けてURDFの固定ジョイントを`/tf`へ既定5Hzでpublishします。このためGround Truthの`ground_truth_enu -> base_link`から搭載センサーまでが1本のTFツリーになり、RViz2のRobotModelでも直接表示できます。操作機体の構成・相対姿勢が変わるとモデルは更新され、KSPからの再送が途絶えると自動的に期限切れになります。LiDARパケットの`partFlightId`がモデル内にある場合、対応linkの子にスキャン原点・姿勢を表すLiDAR frameを配信し、2D/3Dメッセージの`frame_id`をそのframeへ揃えます。
 
 主なオプション:
 

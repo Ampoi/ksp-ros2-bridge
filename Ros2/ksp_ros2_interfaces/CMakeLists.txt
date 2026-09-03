@@ -4,6 +4,7 @@ project(ksp_ros2_interfaces)
 find_package(ament_cmake REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/WheelCommand.msg"
@@ -18,7 +19,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/DockingPortState.msg"
   "msg/SeparationCommand.msg"
   "msg/SeparationState.msg"
-  DEPENDENCIES std_msgs
+  "msg/ControlSetpoint.msg"
+  DEPENDENCIES std_msgs geometry_msgs
 )
 
 ament_export_dependencies(rosidl_default_runtime)

@@ -162,7 +162,7 @@ ros2 topic pub -r 5 /ksp_vessel/actuators/rcs/command \
 
 ## 実装確認先
 
-- `Source/KerbalLiDAR/KerbalRosPropulsionSupport.cs`
+- `Source/KerbalLiDAR/Api/Ksp/KerbalRosPropulsionSupport.cs`
 - `Ros2/ksp_lidar_bridge/ksp_lidar_bridge/propulsion_packets.py`
 - `Ros2/ksp_lidar_bridge/ksp_lidar_bridge/udp_bridge.py`
 - `Ros2/ksp_ros2_interfaces/msg/EngineCommand.msg`

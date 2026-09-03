@@ -58,6 +58,6 @@ ros2 topic echo /ksp_vessel/actuators/wheel/state
 
 ## 実装確認先
 
-- `Source/KerbalLiDAR/KerbalRosVehicleSupport.cs`
+- `Source/KerbalLiDAR/Api/Ksp/KerbalRosVehicleSupport.cs`
 - `Ros2/ksp_ros2_interfaces/msg/WheelCommand.msg`
 - `Ros2/ksp_ros2_interfaces/msg/WheelState.msg`

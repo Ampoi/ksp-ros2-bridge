@@ -132,7 +132,7 @@ ros2 topic pub -r 10 /ksp_vessel/actuators/servo/command \
 
 - `GameData/KerbalLiDAR/Parts/RosServo/part.cfg`
 - `GameData/KerbalLiDAR/Parts/RosLinearMotor/part.cfg`
-- `Source/KerbalLiDAR/KerbalRosMotorSupport.cs`
+- `Source/KerbalLiDAR/Api/Ksp/KerbalRosMotorSupport.cs`
 - `Ros2/ksp_lidar_bridge/ksp_lidar_bridge/motor_packets.py`
 - `Ros2/ksp_ros2_interfaces/msg/MotorCommand.msg`
 - `Ros2/ksp_ros2_interfaces/msg/MotorState.msg`

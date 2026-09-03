@@ -6,10 +6,12 @@ import json
 import math
 import os
 import struct
+from collections import deque
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Deque, Dict, Iterable, List, Optional, Tuple
 
-from geometry_msgs.msg import PoseStamped, TwistStamped, WrenchStamped
+from geometry_msgs.msg import PoseStamped, TransformStamped, TwistStamped
+from ksp_ros2_interfaces.msg import ControlSetpoint
 import rclpy
 from rclpy.duration import Duration
 from rclpy.executors import ExternalShutdownException
@@ -24,22 +26,24 @@ from .core import (
     Vector3,
     add,
     bounding_box_center,
-    clamp_norm,
+    body_orientation_for_sensor_look_at,
+    detumble_required,
     dot,
     euclidean_clusters,
-    look_at_quaternion,
+    integrate_world_orientation,
     make_orbit_basis,
     norm,
     normalize,
     png_bytes,
-    quaternion_conjugate,
     quaternion_error_vector,
     rotate_vector,
     safe_filename_component,
+    search_direction,
     scale,
     subtract,
     transform_point,
     unwrap_angle,
+    vessel_topics,
     voxel_downsample,
 )
 
@@ -94,8 +98,15 @@ class DebrisOrbitNode(Node):
         prefix = self._string("vessel_topic_prefix").rstrip("/")
         lidar_id = self._string("lidar_sensor_id").strip("/")
         camera_id = self._string("camera_sensor_id").strip("/")
-        lidar_topic = self._string("lidar_topic") or f"{prefix}/lidar_3d/{lidar_id}/points"
-        camera_topic = self._string("camera_topic") or f"{prefix}/camera/{camera_id}/image_raw"
+        default_topics = vessel_topics(
+            prefix, lidar_id, camera_id, self.platform_id
+        )
+        lidar_topic = self._string("lidar_topic") or default_topics.lidar_points
+        camera_topic = self._string("camera_topic") or default_topics.camera_image
+        pose_topic = self._string("pose_topic") or default_topics.ground_truth_pose
+        twist_topic = self._string("twist_topic") or default_topics.ground_truth_twist
+        setpoint_topic = self._string("setpoint_topic") or default_topics.control_setpoint
+        status_topic = self._string("status_topic") or default_topics.demo_status
 
         self.world_frame = self._string("world_frame")
         self.body_frame = self._string("body_frame")
@@ -105,12 +116,24 @@ class DebrisOrbitNode(Node):
         self.orbit_direction = 1 if int(self.get_parameter("orbit_direction").value) >= 0 else -1
         plane_normal = tuple(self.get_parameter("orbit_plane_normal").value)
         self.plane_normal = normalize(plane_normal)  # type: ignore[arg-type]
-        self.position_kp = self._positive("position_kp")
-        self.velocity_kd = self._positive("velocity_kd")
-        self.attitude_kp = self._positive("attitude_kp")
-        self.angular_kd = self._positive("angular_kd")
-        self.max_force = self._positive("max_force")
-        self.max_torque = self._positive("max_torque")
+        self.detumble_enter_rate = math.radians(
+            self._positive("detumble_enter_rate_deg_s")
+        )
+        self.detumble_exit_rate = math.radians(
+            self._positive("detumble_exit_rate_deg_s")
+        )
+        if self.detumble_exit_rate >= self.detumble_enter_rate:
+            raise ValueError(
+                "detumble_exit_rate_deg_s must be less than "
+                "detumble_enter_rate_deg_s"
+            )
+        self.search_start_delay = self._nonnegative("search_start_delay_sec")
+        self.search_yaw_amplitude = math.radians(self._positive("search_yaw_amplitude_deg"))
+        self.search_pitch_amplitude = math.radians(self._positive("search_pitch_amplitude_deg"))
+        self.search_period = self._positive("search_period_sec")
+        self.search_memory_timeout = Duration(
+            seconds=self._positive("search_memory_timeout_sec")
+        )
         self.arrival_position_tolerance = self._positive(
             "arrival_position_tolerance"
         )
@@ -135,8 +158,17 @@ class DebrisOrbitNode(Node):
             1.0, max(0.01, velocity_filter_alpha)
         )
         self.target_center_offset = float(self.get_parameter("target_center_offset").value)
+        self.target_acquisition_samples = max(
+            1, int(self.get_parameter("target_acquisition_samples").value)
+        )
         self.state_timeout = Duration(seconds=self._positive("state_timeout_sec"))
         self.target_timeout = Duration(seconds=self._positive("target_timeout_sec"))
+        self.transform_wait_timeout = Duration(
+            seconds=self._positive("transform_wait_timeout_sec")
+        )
+        self.cloud_queue_size = max(
+            1, int(self.get_parameter("cloud_queue_size").value)
+        )
         self.capture_step = math.radians(self._positive("capture_step_deg"))
         self.capture_count = max(1, int(self.get_parameter("capture_count").value))
         self.capture_tolerance = math.radians(self._positive("capture_tolerance_deg"))
@@ -155,6 +187,17 @@ class DebrisOrbitNode(Node):
         self.target: Optional[Vector3] = None
         self.target_velocity: Vector3 = (0.0, 0.0, 0.0)
         self.target_received: Optional[Time] = None
+        self.target_stamp: Optional[Time] = None
+        self.target_observations = 0
+        self.last_target: Optional[Vector3] = None
+        self.last_target_velocity: Vector3 = (0.0, 0.0, 0.0)
+        self.last_target_stamp: Optional[Time] = None
+        self.last_target_received: Optional[Time] = None
+        self.lidar_mount_rotation = (0.0, 0.0, 0.0, 1.0)
+        self.search_started: Optional[Time] = None
+        self.search_reference_direction: Optional[Vector3] = None
+        self.detumbling = False
+        self.cloud_queue: Deque[Tuple[PointCloud2, Time]] = deque()
         self.orbit_started: Optional[Time] = None
         self.basis_u: Optional[Vector3] = None
         self.basis_v: Optional[Vector3] = None
@@ -165,26 +208,26 @@ class DebrisOrbitNode(Node):
         self.complete = False
         self.last_status = ""
 
-        self.wrench_publisher = self.create_publisher(
-            WrenchStamped, self._string("body_wrench_topic"), 10
-        )
-        status_topic = f"/debris_orbit/{self.platform_id}/status"
+        self.setpoint_publisher = self.create_publisher(ControlSetpoint, setpoint_topic, 10)
         self.status_publisher = self.create_publisher(String, status_topic, 10)
         self.create_subscription(
             PointCloud2, lidar_topic, self.receive_cloud, qos_profile_sensor_data
         )
         self.create_subscription(Image, camera_topic, self.receive_image, qos_profile_sensor_data)
         self.create_subscription(
-            PoseStamped, self._string("pose_topic"), self.receive_pose, qos_profile_sensor_data
+            PoseStamped, pose_topic, self.receive_pose, qos_profile_sensor_data
         )
         self.create_subscription(
-            TwistStamped, self._string("twist_topic"), self.receive_twist, qos_profile_sensor_data
+            TwistStamped, twist_topic, self.receive_twist, qos_profile_sensor_data
         )
         rate = self._positive("control_rate_hz")
         self.create_timer(1.0 / rate, self.control)
+        transform_retry_rate = self._positive("transform_retry_rate_hz")
+        self.create_timer(1.0 / transform_retry_rate, self.process_cloud_queue)
         self.get_logger().info(
             f"platform={self.platform_id} lidar={lidar_topic} "
-            f"camera={camera_topic} enabled={self.enabled}"
+            f"camera={camera_topic} setpoint={setpoint_topic} "
+            f"status={status_topic} enabled={self.enabled}"
         )
         self._publish_status("waiting_for_sensor_data")
 
@@ -197,21 +240,23 @@ class DebrisOrbitNode(Node):
             "vessel_topic_prefix": "/ksp_vessel",
             "lidar_topic": "",
             "camera_topic": "",
-            "pose_topic": "/ksp_vessel/ground_truth/pose",
-            "twist_topic": "/ksp_vessel/ground_truth/twist",
-            "body_wrench_topic": "/ksp_vessel/body_wrench",
+            "pose_topic": "",
+            "twist_topic": "",
+            "setpoint_topic": "",
+            "status_topic": "",
             "world_frame": "ground_truth_enu",
             "body_frame": "base_link",
             "orbit_radius": 15.0,
             "angular_speed_deg_s": 3.0,
             "orbit_direction": 1,
             "orbit_plane_normal": [0.0, 0.0, 1.0],
-            "position_kp": 120.0,
-            "velocity_kd": 350.0,
-            "attitude_kp": 800.0,
-            "angular_kd": 300.0,
-            "max_force": 5000.0,
-            "max_torque": 3000.0,
+            "detumble_enter_rate_deg_s": 10.0,
+            "detumble_exit_rate_deg_s": 3.0,
+            "search_start_delay_sec": 0.3,
+            "search_yaw_amplitude_deg": 8.0,
+            "search_pitch_amplitude_deg": 4.0,
+            "search_period_sec": 8.0,
+            "search_memory_timeout_sec": 10.0,
             "arrival_position_tolerance": 0.75,
             "arrival_speed_tolerance": 0.25,
             "arrival_attitude_tolerance_deg": 5.0,
@@ -226,8 +271,12 @@ class DebrisOrbitNode(Node):
             "target_filter_alpha": 0.25,
             "target_velocity_filter_alpha": 0.35,
             "target_center_offset": 0.0,
+            "target_acquisition_samples": 3,
             "state_timeout_sec": 0.5,
             "target_timeout_sec": 1.0,
+            "transform_wait_timeout_sec": 1.0,
+            "transform_retry_rate_hz": 50.0,
+            "cloud_queue_size": 20,
             "control_rate_hz": 20.0,
             "capture_step_deg": 30.0,
             "capture_count": 12,
@@ -245,6 +294,12 @@ class DebrisOrbitNode(Node):
         value = float(self.get_parameter(name).value)
         if not math.isfinite(value) or value <= 0.0:
             raise ValueError(f"parameter {name} must be finite and greater than zero")
+        return value
+
+    def _nonnegative(self, name: str) -> float:
+        value = float(self.get_parameter(name).value)
+        if not math.isfinite(value) or value < 0.0:
+            raise ValueError(f"parameter {name} must be finite and nonnegative")
         return value
 
     def receive_pose(self, message: PoseStamped) -> None:
@@ -268,6 +323,73 @@ class DebrisOrbitNode(Node):
         self.twist_received = self.get_clock().now()
 
     def receive_cloud(self, message: PointCloud2) -> None:
+        if len(self.cloud_queue) >= self.cloud_queue_size:
+            self.cloud_queue.popleft()
+            self.get_logger().warning(
+                "LiDAR cloud queue is full; dropped the oldest cloud",
+                throttle_duration_sec=5.0,
+            )
+        self.cloud_queue.append((message, self.get_clock().now()))
+
+    def process_cloud_queue(self) -> None:
+        """Wait asynchronously for cloud-time transforms without blocking TF callbacks."""
+        if not self.cloud_queue:
+            return
+        message, queued_at = self.cloud_queue[0]
+        now = self.get_clock().now()
+        stamp = Time.from_msg(message.header.stamp)
+        pose_ready = self._state_reaches_stamp(stamp)
+        # The LiDAR-to-body chain is an extrinsic/model transform. Its dynamic
+        # publication rate is intentionally lower than the point-cloud rate,
+        # so requiring every edge to bracket the exact cloud timestamp can
+        # fail even though the complete current chain is available. The world
+        # motion is still evaluated at `stamp` using Ground Truth below.
+        transform_time = Time()
+        transform_ready = bool(message.header.frame_id) and self.tf_buffer.can_transform(
+            self.body_frame,
+            message.header.frame_id,
+            transform_time,
+            timeout=Duration(seconds=0.0),
+        )
+        if not pose_ready or not transform_ready:
+            if now - queued_at > self.transform_wait_timeout:
+                self.cloud_queue.popleft()
+                missing = []
+                if not pose_ready:
+                    missing.append("Ground Truth state")
+                if not transform_ready:
+                    missing.append(
+                        f"TF {self.body_frame} <- {message.header.frame_id or '<empty>'}"
+                    )
+                self.get_logger().warning(
+                    "Dropped a LiDAR cloud after waiting "
+                    f"{self.transform_wait_timeout.nanoseconds * 1.0e-9:.2f}s for "
+                    + " and ".join(missing),
+                    throttle_duration_sec=5.0,
+                )
+            return
+        try:
+            transform = self.tf_buffer.lookup_transform(
+                self.body_frame,
+                message.header.frame_id,
+                transform_time,
+                timeout=Duration(seconds=0.0),
+            )
+        except TransformException:
+            return
+        self.cloud_queue.popleft()
+        self._process_cloud(message, stamp, transform)
+
+    def _process_cloud(
+        self, message: PointCloud2, stamp: Time, transform: TransformStamped
+    ) -> None:
+        translation = transform.transform.translation
+        rotation = transform.transform.rotation
+        transform_translation = (translation.x, translation.y, translation.z)
+        transform_rotation = (rotation.x, rotation.y, rotation.z, rotation.w)
+        # base_link <- sensor: preserve the real LiDAR mounting orientation so
+        # guidance aims the sensor axis rather than assuming body +X.
+        self.lidar_mount_rotation = transform_rotation
         points = [
             point
             for point in point_cloud_xyz(message)
@@ -277,23 +399,7 @@ class DebrisOrbitNode(Node):
         clusters = euclidean_clusters(sampled, self.cluster_tolerance, self.cluster_min_points)
         if not clusters:
             return
-        try:
-            transform = self.tf_buffer.lookup_transform(
-                self.world_frame,
-                message.header.frame_id,
-                Time.from_msg(message.header.stamp),
-                timeout=Duration(seconds=0.05),
-            )
-        except TransformException as error:
-            self.get_logger().warning(
-                f"LiDAR transform unavailable: {error}", throttle_duration_sec=5.0
-            )
-            return
-        translation = transform.transform.translation
-        rotation = transform.transform.rotation
-        transform_translation = (translation.x, translation.y, translation.z)
-        transform_rotation = (rotation.x, rotation.y, rotation.z, rotation.w)
-        candidates: List[Vector3] = []
+        candidates_body: List[Vector3] = []
         for cluster in clusters:
             center_sensor = bounding_box_center(cluster)
             if self.target_center_offset:
@@ -301,9 +407,15 @@ class DebrisOrbitNode(Node):
                     center_sensor,
                     scale(normalize(center_sensor), self.target_center_offset),
                 )
-            candidates.append(
+            candidates_body.append(
                 transform_point(transform_translation, transform_rotation, center_sensor)
             )
+
+        pose_position, pose_orientation = self._body_pose_at(stamp)
+        candidates = [
+            add(pose_position, rotate_vector(pose_orientation, center_body))
+            for center_body in candidates_body
+        ]
 
         received = self.get_clock().now()
         if self.target is None:
@@ -313,11 +425,12 @@ class DebrisOrbitNode(Node):
                 return
             selected = candidates[self.target_cluster_index]
             self.target_velocity = self._twist_linear()
+            self.target_observations = 1
         else:
-            assert self.target_received is not None
-            elapsed = max(
-                1.0e-3, (received - self.target_received).nanoseconds * 1.0e-9
-            )
+            assert self.target_stamp is not None
+            elapsed = (stamp - self.target_stamp).nanoseconds * 1.0e-9
+            if elapsed <= 1.0e-3:
+                return
             predicted = add(self.target, scale(self.target_velocity, elapsed))
             measurement = min(
                 candidates, key=lambda candidate: norm(subtract(candidate, predicted))
@@ -336,8 +449,16 @@ class DebrisOrbitNode(Node):
                 ),
                 scale(measured_velocity, self.target_velocity_filter_alpha),
             )
+            self.target_observations += 1
         self.target = selected
         self.target_received = received
+        self.target_stamp = stamp
+        self.last_target = selected
+        self.last_target_velocity = self.target_velocity
+        self.last_target_stamp = stamp
+        self.last_target_received = received
+        self.search_started = None
+        self.search_reference_direction = None
 
     def receive_image(self, message: Image) -> None:
         if self.pending_capture is None or self.complete:
@@ -379,26 +500,44 @@ class DebrisOrbitNode(Node):
     def control(self) -> None:
         now = self.get_clock().now()
         if not self.enabled:
+            self._stop_detumble()
+            self._publish_idle_setpoint(now)
             self._publish_status("disabled")
             return
         if self.complete and self.stop_after_capture:
-            self._publish_zero_wrench(now)
+            self._publish_idle_setpoint(now)
             return
         if not self._state_is_fresh(now):
+            self._stop_detumble()
+            self._publish_idle_setpoint(now)
             self._publish_status("waiting_for_fresh_pose_and_twist")
+            return
+        if self._update_detumble_mode(now):
             return
         if (
             self.target is None
             or self.target_received is None
             or now - self.target_received > self.target_timeout
         ):
-            self._publish_zero_wrench(now)
-            self._publish_status("target_lost")
+            self._reset_target_tracking()
+            self._publish_search_setpoint(now)
+            return
+        if self.target_observations < self.target_acquisition_samples:
+            target = self._predicted_target(now)
+            if target is not None:
+                self._publish_target_attitude_setpoint(now, target)
+            self._publish_status(
+                "acquiring_target",
+                observations=self.target_observations,
+                required_observations=self.target_acquisition_samples,
+            )
             return
         target = self._predicted_target(now)
         if target is None:
+            self._publish_search_setpoint(now)
             return
         if self.basis_u is None and not self._initialize_orbit(target):
+            self._publish_idle_setpoint(now)
             return
         assert self.pose is not None and self.twist is not None and self.target is not None
         assert self.basis_u is not None and self.basis_v is not None
@@ -425,24 +564,18 @@ class DebrisOrbitNode(Node):
         position = self._pose_position()
         velocity = self._twist_linear()
         position_error = subtract(desired_position, position)
-        force_world = add(
-            scale(position_error, self.position_kp),
-            scale(subtract(desired_velocity, velocity), self.velocity_kd),
-        )
-        force_world = clamp_norm(force_world, self.max_force)
-
         current_q = self._pose_quaternion()
-        desired_q = look_at_quaternion(subtract(target, position), self.plane_normal)
-        angular_velocity = self._twist_angular()
-        attitude_error = quaternion_error_vector(desired_q, current_q)
-        torque_world = add(
-            scale(attitude_error, self.attitude_kp),
-            scale(angular_velocity, -self.angular_kd),
+        desired_q = body_orientation_for_sensor_look_at(
+            subtract(target, position), self.plane_normal, self.lidar_mount_rotation
         )
-        torque_world = clamp_norm(torque_world, self.max_torque)
-        inverse_q = quaternion_conjugate(current_q)
-        self._publish_wrench(
-            now, rotate_vector(inverse_q, force_world), rotate_vector(inverse_q, torque_world)
+        attitude_error = quaternion_error_vector(desired_q, current_q)
+        self._publish_setpoint(
+            now,
+            ControlSetpoint.MODE_SIX_DOF,
+            desired_position,
+            desired_q,
+            desired_velocity,
+            (0.0, 0.0, 0.0),
         )
         if self.orbit_started is None:
             if (
@@ -458,6 +591,60 @@ class DebrisOrbitNode(Node):
                 self._publish_status("orbiting")
             return
         self._update_capture_progress(position, target)
+
+    def _publish_target_attitude_setpoint(self, now: Time, target: Vector3) -> None:
+        direction = subtract(target, self._pose_position())
+        desired_q = body_orientation_for_sensor_look_at(
+            direction, self.plane_normal, self.lidar_mount_rotation
+        )
+        self._publish_setpoint(
+            now,
+            ControlSetpoint.MODE_ATTITUDE_HOLD,
+            self._pose_position(),
+            desired_q,
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 0.0),
+        )
+
+    def _publish_search_setpoint(self, now: Time) -> None:
+        if self.search_started is None:
+            self.search_started = now
+        elapsed = max(0.0, (now - self.search_started).nanoseconds * 1.0e-9)
+        if self.search_reference_direction is None:
+            remembered = self._remembered_target(now)
+            if remembered is not None:
+                self.search_reference_direction = subtract(remembered, self._pose_position())
+            else:
+                sensor_world = rotate_vector(
+                    self._pose_quaternion(),
+                    rotate_vector(self.lidar_mount_rotation, (1.0, 0.0, 0.0)),
+                )
+                self.search_reference_direction = sensor_world
+        scan_elapsed = max(0.0, elapsed - self.search_start_delay)
+        direction = search_direction(
+            self.search_reference_direction,
+            self.plane_normal,
+            scan_elapsed,
+            self.search_period,
+            0.0 if elapsed < self.search_start_delay else self.search_yaw_amplitude,
+            0.0 if elapsed < self.search_start_delay else self.search_pitch_amplitude,
+        )
+        desired_q = body_orientation_for_sensor_look_at(
+            direction, self.plane_normal, self.lidar_mount_rotation
+        )
+        self._publish_setpoint(
+            now,
+            ControlSetpoint.MODE_ATTITUDE_HOLD,
+            self._pose_position(),
+            desired_q,
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 0.0),
+        )
+        self._publish_status(
+            "searching",
+            elapsed_sec=round(elapsed, 1),
+            remembered_target=self._remembered_target(now) is not None,
+        )
 
     def _update_capture_progress(self, position: Vector3, target: Vector3) -> None:
         assert self.basis_u is not None and self.basis_v is not None
@@ -484,10 +671,83 @@ class DebrisOrbitNode(Node):
             and now - self.twist_received <= self.state_timeout
         )
 
-    def _predicted_target(self, now: Time) -> Optional[Vector3]:
-        if self.target is None or self.target_received is None:
+    def _update_detumble_mode(self, now: Time) -> bool:
+        angular_velocity = self._twist_angular()
+        angular_rate = norm(angular_velocity)
+        required = detumble_required(
+            self.detumbling,
+            angular_rate,
+            self.detumble_enter_rate,
+            self.detumble_exit_rate,
+        )
+        if not required:
+            self._stop_detumble()
+            return False
+
+        self.detumbling = True
+        self._reset_target_tracking()
+        self._publish_setpoint(
+            now,
+            ControlSetpoint.MODE_DETUMBLE,
+            self._pose_position(),
+            self._pose_quaternion(),
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 0.0),
+        )
+        self._publish_status(
+            "detumbling",
+            angular_rate_deg_s=round(math.degrees(angular_rate), 1),
+        )
+        return True
+
+    def _stop_detumble(self) -> None:
+        self.detumbling = False
+
+    def _reset_target_tracking(self) -> None:
+        self.target = None
+        self.target_velocity = (0.0, 0.0, 0.0)
+        self.target_received = None
+        self.target_stamp = None
+        self.target_observations = 0
+        self.basis_u = None
+        self.basis_v = None
+        self.orbit_started = None
+        self.actual_angle = None
+        self.pending_capture = None
+
+    def _remembered_target(self, now: Time) -> Optional[Vector3]:
+        if (
+            self.last_target is None
+            or self.last_target_stamp is None
+            or self.last_target_received is None
+            or now - self.last_target_received > self.search_memory_timeout
+        ):
             return None
-        elapsed = max(0.0, (now - self.target_received).nanoseconds * 1.0e-9)
+        elapsed = max(0.0, (now - self.last_target_stamp).nanoseconds * 1.0e-9)
+        return add(self.last_target, scale(self.last_target_velocity, elapsed))
+
+    def _state_reaches_stamp(self, stamp: Time) -> bool:
+        if self.pose is None or self.twist is None:
+            return False
+        pose_stamp = Time.from_msg(self.pose.header.stamp)
+        twist_stamp = Time.from_msg(self.twist.header.stamp)
+        return pose_stamp >= stamp and twist_stamp >= stamp
+
+    def _body_pose_at(self, stamp: Time) -> Tuple[Vector3, Tuple[float, float, float, float]]:
+        """Back-propagate the newest Ground Truth sample to a queued cloud stamp."""
+        assert self.pose is not None and self.twist is not None
+        pose_stamp = Time.from_msg(self.pose.header.stamp)
+        elapsed = (stamp - pose_stamp).nanoseconds * 1.0e-9
+        position = add(self._pose_position(), scale(self._twist_linear(), elapsed))
+        orientation = integrate_world_orientation(
+            self._pose_quaternion(), self._twist_angular(), elapsed
+        )
+        return position, orientation
+
+    def _predicted_target(self, now: Time) -> Optional[Vector3]:
+        if self.target is None or self.target_stamp is None:
+            return None
+        elapsed = max(0.0, (now - self.target_stamp).nanoseconds * 1.0e-9)
         return add(self.target, scale(self.target_velocity, elapsed))
 
     def _pose_position(self) -> Vector3:
@@ -510,16 +770,47 @@ class DebrisOrbitNode(Node):
         v = self.twist.twist.angular
         return (v.x, v.y, v.z)
 
-    def _publish_wrench(self, now: Time, force: Vector3, torque: Vector3) -> None:
-        message = WrenchStamped()
+    def _publish_setpoint(
+        self,
+        now: Time,
+        mode: int,
+        position: Vector3,
+        orientation: Tuple[float, float, float, float],
+        linear_velocity: Vector3,
+        angular_velocity: Vector3,
+    ) -> None:
+        message = ControlSetpoint()
         message.header.stamp = now.to_msg()
-        message.header.frame_id = self.body_frame
-        message.wrench.force.x, message.wrench.force.y, message.wrench.force.z = force
-        message.wrench.torque.x, message.wrench.torque.y, message.wrench.torque.z = torque
-        self.wrench_publisher.publish(message)
+        message.header.frame_id = self.world_frame
+        message.mode = mode
+        message.position.x, message.position.y, message.position.z = position
+        (
+            message.orientation.x,
+            message.orientation.y,
+            message.orientation.z,
+            message.orientation.w,
+        ) = orientation
+        (
+            message.linear_velocity.x,
+            message.linear_velocity.y,
+            message.linear_velocity.z,
+        ) = linear_velocity
+        (
+            message.angular_velocity.x,
+            message.angular_velocity.y,
+            message.angular_velocity.z,
+        ) = angular_velocity
+        self.setpoint_publisher.publish(message)
 
-    def _publish_zero_wrench(self, now: Time) -> None:
-        self._publish_wrench(now, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+    def _publish_idle_setpoint(self, now: Time) -> None:
+        self._publish_setpoint(
+            now,
+            ControlSetpoint.MODE_IDLE,
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 0.0, 1.0),
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 0.0),
+        )
 
     def _publish_status(self, state: str, **extra: object) -> None:
         payload = {
@@ -546,6 +837,9 @@ def main(args=None) -> None:
     except (ExternalShutdownException, KeyboardInterrupt):
         pass
     finally:
-        node.destroy_node()
+        try:
+            node.destroy_node()
+        except KeyboardInterrupt:
+            pass
         if rclpy.ok():
             rclpy.shutdown()

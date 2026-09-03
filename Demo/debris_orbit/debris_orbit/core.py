@@ -8,11 +8,56 @@ import re
 import struct
 import zlib
 from collections import deque
-from typing import Iterable, List, Optional, Sequence, Tuple
+from typing import Iterable, List, NamedTuple, Optional, Sequence, Tuple
 
 
 Vector3 = Tuple[float, float, float]
 Quaternion = Tuple[float, float, float, float]
+
+
+class VesselTopics(NamedTuple):
+    """Topic names from the current ROS2 for KSP active-vessel contract."""
+
+    lidar_points: str
+    camera_image: str
+    ground_truth_pose: str
+    ground_truth_twist: str
+    body_wrench: str
+    control_setpoint: str
+    controller_status: str
+    demo_status: str
+
+
+def sanitize_ros_component(value: str, fallback: str) -> str:
+    """Mirror the bridge's normalization of user-configurable name tokens."""
+    name = re.sub(r"[^A-Za-z0-9_]", "_", str(value or ""))
+    name = re.sub(r"_+", "_", name).strip("_").lower()
+    if not name:
+        name = fallback
+    if not re.match(r"^[A-Za-z_]", name):
+        name = "_" + name
+    return name
+
+
+def vessel_topics(
+    prefix: str, lidar_sensor_id: str, camera_sensor_id: str, platform_id: str
+) -> VesselTopics:
+    """Resolve all default Topic names for the `/ksp_vessel` API."""
+    root_value = str(prefix or "").strip("/")
+    root = f"/{root_value}" if root_value else ""
+    lidar_id = sanitize_ros_component(lidar_sensor_id, "lidar_3d")
+    camera_id = sanitize_ros_component(camera_sensor_id, "camera")
+    platform = sanitize_ros_component(platform_id, "demo_vehicle")
+    return VesselTopics(
+        lidar_points=f"{root}/lidar_3d/{lidar_id}/points",
+        camera_image=f"{root}/camera/{camera_id}/image_raw",
+        ground_truth_pose=f"{root}/ground_truth/pose",
+        ground_truth_twist=f"{root}/ground_truth/twist",
+        body_wrench=f"{root}/body_wrench",
+        control_setpoint=f"{root}/demos/debris_orbit/{platform}/setpoint",
+        controller_status=f"{root}/demos/debris_orbit/{platform}/controller_status",
+        demo_status=f"{root}/demos/debris_orbit/{platform}/status",
+    )
 
 
 def safe_filename_component(value: str, fallback: str = "unnamed") -> str:
@@ -64,6 +109,23 @@ def clamp_norm(a: Vector3, maximum: float) -> Vector3:
     return a
 
 
+def linear_ramp_fraction(elapsed: float, duration: float) -> float:
+    """Return a bounded 0..1 command ramp, including safe invalid-input handling."""
+    if not math.isfinite(elapsed) or elapsed <= 0.0:
+        return 0.0
+    if not math.isfinite(duration) or duration <= 0.0:
+        return 1.0
+    return min(1.0, elapsed / duration)
+
+
+def detumble_required(
+    active: bool, angular_rate: float, enter_rate: float, exit_rate: float
+) -> bool:
+    """Apply hysteresis to the detumble mode transition."""
+    threshold = exit_rate if active else enter_rate
+    return math.isfinite(angular_rate) and angular_rate > threshold
+
+
 def quaternion_conjugate(q: Quaternion) -> Quaternion:
     return (-q[0], -q[1], -q[2], q[3])
 
@@ -84,6 +146,29 @@ def quaternion_normalize(q: Quaternion) -> Quaternion:
     if length <= 1.0e-12:
         return (0.0, 0.0, 0.0, 1.0)
     return tuple(value / length for value in q)  # type: ignore[return-value]
+
+
+def quaternion_from_rotation_vector(vector: Vector3) -> Quaternion:
+    """Convert an axis-angle vector in radians to a quaternion."""
+    angle = norm(vector)
+    if angle < 1.0e-12:
+        return (0.0, 0.0, 0.0, 1.0)
+    half_angle = 0.5 * angle
+    factor = math.sin(half_angle) / angle
+    return (
+        vector[0] * factor,
+        vector[1] * factor,
+        vector[2] * factor,
+        math.cos(half_angle),
+    )
+
+
+def integrate_world_orientation(
+    orientation: Quaternion, angular_velocity: Vector3, elapsed: float
+) -> Quaternion:
+    """Move an orientation by a world-frame angular velocity for `elapsed` seconds."""
+    delta = quaternion_from_rotation_vector(scale(angular_velocity, elapsed))
+    return quaternion_normalize(quaternion_multiply(delta, orientation))
 
 
 def rotate_vector(q: Quaternion, vector: Vector3) -> Vector3:
@@ -128,6 +213,41 @@ def look_at_quaternion(forward: Vector3, up_hint: Vector3) -> Quaternion:
     y_axis = normalize(y_axis)
     z_axis = normalize(cross(x_axis, y_axis))
     return matrix_to_quaternion(x_axis, y_axis, z_axis)
+
+
+def body_orientation_for_sensor_look_at(
+    forward_world: Vector3,
+    up_hint_world: Vector3,
+    sensor_in_body: Quaternion,
+) -> Quaternion:
+    """Point sensor +X at a world direction while compensating its mounting rotation."""
+    sensor_world = look_at_quaternion(forward_world, up_hint_world)
+    return quaternion_normalize(
+        quaternion_multiply(sensor_world, quaternion_conjugate(sensor_in_body))
+    )
+
+
+def search_direction(
+    center_direction: Vector3,
+    up_hint: Vector3,
+    elapsed: float,
+    period: float,
+    yaw_amplitude: float,
+    pitch_amplitude: float,
+) -> Vector3:
+    """Return a bounded, periodic scan direction around the last line of sight."""
+    center = normalize(center_direction, (1.0, 0.0, 0.0))
+    side = cross(up_hint, center)
+    if norm(side) < 1.0e-6:
+        side = cross((0.0, 1.0, 0.0), center)
+    side = normalize(side, (0.0, 1.0, 0.0))
+    local_up = normalize(cross(center, side), (0.0, 0.0, 1.0))
+    phase = 2.0 * math.pi * max(0.0, elapsed) / max(1.0e-6, period)
+    yaw = yaw_amplitude * math.sin(phase)
+    pitch = pitch_amplitude * math.sin(2.0 * phase)
+    return normalize(
+        add(center, add(scale(side, math.tan(yaw)), scale(local_up, math.tan(pitch))))
+    )
 
 
 def quaternion_error_vector(desired: Quaternion, current: Quaternion) -> Vector3:

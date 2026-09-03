@@ -78,5 +78,5 @@ active vesselモデルへ接続できる場合は対応linkの子`camera_optical
 ## 実装確認先
 
 - `GameData/KerbalLiDAR/Parts/RgbCamera/part.cfg`
-- `Source/KerbalLiDAR/ModuleKerbalRgbCamera.cs`
+- `Source/KerbalLiDAR/Api/Ksp/ModuleKerbalRgbCamera.cs`
 - `Ros2/ksp_lidar_bridge/ksp_lidar_bridge/camera_packets.py`

@@ -22,5 +22,10 @@ setup(
     maintainer_email="user@example.com",
     description="LiDAR-guided debris orbit and 30-degree image capture demo for KSP ROS2.",
     license="MIT",
-    entry_points={"console_scripts": ["debris_orbit_node = debris_orbit.node:main"]},
+    entry_points={
+        "console_scripts": [
+            "debris_orbit_node = debris_orbit.node:main",
+            "debris_orbit_controller = debris_orbit.controller:main",
+        ]
+    },
 )

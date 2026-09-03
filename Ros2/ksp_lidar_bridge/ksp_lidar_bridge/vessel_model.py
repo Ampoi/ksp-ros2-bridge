@@ -50,6 +50,8 @@ class VesselProxyModel:
     model_id: str
     urdf: str
     root_frame: str
+    base_to_root_translation: Vector3
+    base_to_root_rotation: Quaternion
     part_frames: Dict[int, str]
     transforms: List[JointTransform]
     expires_after_sec: float
@@ -219,6 +221,28 @@ def _model_from_bundle(
     if bundle.get("rootFrame") != root_frame:
         raise ValueError("active vessel URDF root frame mismatch")
 
+    # Early v1 producers did not include the base-to-root pose. Preserve wire
+    # compatibility with those packets by attaching the proxy root directly to
+    # base_link; current producers provide the precise CoM-relative pose.
+    base_to_root_translation = _parse_number_array(
+        bundle.get("baseToRootPosition", [0.0, 0.0, 0.0]),
+        "baseToRootPosition",
+        3,
+    )
+    raw_base_to_root_rotation = _parse_number_array(
+        bundle.get("baseToRootRotation", [0.0, 0.0, 0.0, 1.0]),
+        "baseToRootRotation",
+        4,
+    )
+    quaternion_norm = math.sqrt(
+        sum(component * component for component in raw_base_to_root_rotation)
+    )
+    if quaternion_norm < 1.0e-9:
+        raise ValueError("baseToRootRotation must be a non-zero quaternion")
+    base_to_root_rotation = tuple(
+        component / quaternion_norm for component in raw_base_to_root_rotation
+    )
+
     mappings = bundle.get("partFrames")
     if not isinstance(mappings, list) or len(mappings) != len(link_names):
         raise ValueError("partFrames must map every proxy link")
@@ -243,6 +267,8 @@ def _model_from_bundle(
         model_id=expected_model_id,
         urdf=urdf,
         root_frame=root_frame,
+        base_to_root_translation=base_to_root_translation,
+        base_to_root_rotation=base_to_root_rotation,
         part_frames=part_frames,
         transforms=transforms,
         expires_after_sec=expires_after_sec,
@@ -414,6 +440,14 @@ def _parse_vector(value: Any, label: str) -> Vector3:
     if len(components) != 3:
         raise ValueError(f"{label} must have three components")
     return tuple(_strict_float(component, label) for component in components)  # type: ignore
+
+
+def _parse_number_array(value: Any, label: str, length: int) -> tuple:
+    if not isinstance(value, list) or len(value) != length:
+        raise ValueError(f"{label} must be an array with {length} components")
+    if any(isinstance(component, bool) for component in value):
+        raise ValueError(f"{label} must contain only numbers")
+    return tuple(_strict_float(component, label) for component in value)
 
 
 def _rpy_to_quaternion(rpy: Vector3) -> Quaternion:

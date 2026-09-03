@@ -58,7 +58,7 @@ from .packet_conversion import (
     expired_topic_names,
     laser_scan_from_packet,
     lidar_topic_from_packet,
-    packet_part_name,
+    packet_sensor_id,
     points_from_packet,
     sanitize_ros_name,
     sensor_pose_from_packet,
@@ -386,9 +386,9 @@ class KerbalLidarUdpBridge(Node):
             self.get_logger().warning(f"Dropped packet with unsupported LiDAR mode: {mode}")
             return
 
-        part_name = sanitize_ros_name(packet_part_name(packet), "lidar")
+        sensor_id = sanitize_ros_name(packet_sensor_id(packet), "lidar")
         stamp = self.get_clock().now().to_msg()
-        frame_id = self.sensor_frame_for_packet(packet, part_name, stamp)
+        frame_id = self.sensor_frame_for_packet(packet, sensor_id, stamp)
 
         if mode == "2D":
             publisher = self.publisher_for(topic, "LaserScan", LaserScan)
@@ -618,6 +618,20 @@ class KerbalLidarUdpBridge(Node):
 
         stamp = self.get_clock().now().to_msg()
         messages = []
+        root_transform = TransformStamped()
+        root_transform.header.stamp = stamp
+        root_transform.header.frame_id = "base_link"
+        root_transform.child_frame_id = self.active_model.root_frame
+        translation = self.active_model.base_to_root_translation
+        rotation = self.active_model.base_to_root_rotation
+        root_transform.transform.translation.x = translation[0]
+        root_transform.transform.translation.y = translation[1]
+        root_transform.transform.translation.z = translation[2]
+        root_transform.transform.rotation.x = rotation[0]
+        root_transform.transform.rotation.y = rotation[1]
+        root_transform.transform.rotation.z = rotation[2]
+        root_transform.transform.rotation.w = rotation[3]
+        messages.append(root_transform)
         for transform in self.active_model.transforms:
             message = TransformStamped()
             message.header.stamp = stamp
@@ -666,16 +680,16 @@ class KerbalLidarUdpBridge(Node):
         try:
             topics = [lidar_topic_from_packet(packet, self.topic_prefix)]
         except ValueError:
-            part_name = sanitize_ros_name(packet_part_name(packet), "lidar")
+            sensor_id = sanitize_ros_name(packet_sensor_id(packet), "lidar")
             topics = [
-                f"{self.topic_prefix}/lidar_2d/{part_name}/scan",
-                f"{self.topic_prefix}/lidar_3d/{part_name}/points",
+                f"{self.topic_prefix}/lidar_2d/{sensor_id}/scan",
+                f"{self.topic_prefix}/lidar_3d/{sensor_id}/points",
             ]
         for topic in topics:
             self.remove_publisher(topic, reason)
 
     def remove_camera_publishers(self, packet: Dict[str, Any], reason: str) -> None:
-        part_name = packet_part_name(packet)
+        part_name = packet_sensor_id(packet)
         source = str(packet.get("source") or "rgb_camera")
         try:
             topics = camera_topics(

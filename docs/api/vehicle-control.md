@@ -53,6 +53,6 @@ ros2 run tf2_ros tf2_echo ground_truth_enu base_link
 
 ## 実装確認先
 
-- `Source/KerbalLiDAR/KerbalRosVehicleSupport.cs`
+- `Source/KerbalLiDAR/Api/Ksp/KerbalRosVehicleSupport.cs`
 - `Ros2/ksp_lidar_bridge/ksp_lidar_bridge/vehicle_packets.py`
 - `Ros2/ksp_lidar_bridge/ksp_lidar_bridge/udp_bridge.py`

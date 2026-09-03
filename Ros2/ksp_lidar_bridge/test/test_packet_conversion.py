@@ -10,8 +10,7 @@ from ksp_lidar_bridge.packet_conversion import (
     lidar_topic_from_packet,
     lidar_topic_suffix,
     normalized_ranges,
-    packet_lidar_name,
-    packet_part_name,
+    packet_sensor_id,
     points_from_packet,
     sanitize_ros_name,
     sensor_pose_from_packet,
@@ -158,7 +157,7 @@ class ScanNormalizationTests(unittest.TestCase):
 class NameTests(unittest.TestCase):
     def test_prefers_explicit_sensor_id(self):
         packet = {"sensorId": "lidar_3d_ab12", "partName": "legacy_name"}
-        self.assertEqual(packet_part_name(packet), "lidar_3d_ab12")
+        self.assertEqual(packet_sensor_id(packet), "lidar_3d_ab12")
 
     def test_prefers_part_name(self):
         packet = {
@@ -166,15 +165,15 @@ class NameTests(unittest.TestCase):
             "lidarName": "legacy_name",
             "name": "oldest_name",
         }
-        self.assertEqual(packet_part_name(packet), "roof_lidar")
+        self.assertEqual(packet_sensor_id(packet), "roof_lidar")
 
     def test_sanitizes_explicit_lidar_name(self):
         packet = {"lidarName": "Front LiDAR #1"}
-        self.assertEqual(sanitize_ros_name(packet_lidar_name(packet)), "front_lidar_1")
+        self.assertEqual(sanitize_ros_name(packet_sensor_id(packet)), "front_lidar_1")
 
     def test_builds_name_from_vessel_and_part(self):
         packet = {"vessel": "Mun Rover", "partFlightId": "42"}
-        self.assertEqual(packet_part_name(packet), "mun_rover_42")
+        self.assertEqual(packet_sensor_id(packet), "mun_rover_42")
 
     def test_builds_topic_suffix_for_each_lidar_mode(self):
         self.assertEqual(lidar_topic_suffix("2D"), ("lidar_2d", "scan"))

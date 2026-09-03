@@ -12,7 +12,6 @@ namespace KerbalLiDAR
     public class ModuleKerbalRgbCamera : PartModule
     {
         private const int ProtocolVersion = 1;
-        private const int MaxPartNameLength = 64;
 
         [KSPField(isPersistant = true, guiActive = true, guiActiveEditor = true, guiName = "Camera")]
         [UI_Toggle(enabledText = "On", disabledText = "Off")]
@@ -81,7 +80,6 @@ namespace KerbalLiDAR
         private readonly string sessionId = Guid.NewGuid().ToString("N");
         private long frameSequence;
         private float nextFrameTime;
-        private float nextNameValidationTime;
         private bool flightTopicActive;
         private KspSceneRgbCapture sceneCapture;
         private UdpClient udpClient;
@@ -93,7 +91,6 @@ namespace KerbalLiDAR
         {
             base.OnStart(state);
             NormalizeConfig();
-            AssignUniquePartName(partName, false);
         }
 
         public override void OnLoad(ConfigNode node)
@@ -107,7 +104,6 @@ namespace KerbalLiDAR
             base.OnUpdate();
             if (HighLogic.LoadedSceneIsEditor)
             {
-                MaintainUniquePartName();
                 return;
             }
 
@@ -133,38 +129,6 @@ namespace KerbalLiDAR
             {
                 CaptureAndSend();
             }
-        }
-
-        [KSPEvent(guiActive = false, guiActiveEditor = false, guiName = "Edit ROS2 Part Name", active = false)]
-        public void EditPartName()
-        {
-            var pendingName = ResolvePartName();
-            var dialogId = "kerbal_rgb_camera_part_name_" + (part != null ? part.craftID.ToString(CultureInfo.InvariantCulture) : "0");
-            PopupDialog.DismissPopup(dialogId);
-            var dialog = new MultiOptionDialog(
-                dialogId,
-                "Use letters, numbers, and underscores. The name is made unique within this craft.",
-                "ROS2 RGB Camera Name",
-                HighLogic.UISkin,
-                new DialogGUIBase[]
-                {
-                    new DialogGUITextInput(
-                        pendingName,
-                        false,
-                        MaxPartNameLength,
-                        delegate(string value) { pendingName = value; return value; },
-                        280f),
-                    new DialogGUIButton(
-                        "Save",
-                        delegate
-                        {
-                            var assigned = AssignUniquePartName(pendingName, true);
-                            ScreenMessages.PostScreenMessage("ROS2 camera name: " + assigned, 3f, ScreenMessageStyle.UPPER_CENTER);
-                        },
-                        true),
-                    new DialogGUIButton("Cancel", delegate { }, true)
-                });
-            PopupDialog.SpawnPopupDialog(dialog, false, HighLogic.UISkin, true, string.Empty);
         }
 
         [KSPEvent(guiActive = true, guiActiveEditor = true, guiName = "Resolution: 160 x 120", active = true)]
@@ -254,7 +218,7 @@ namespace KerbalLiDAR
             var checksum = Sha256Hex(rgb);
             var framePosition = UnityVectorToRos(partTransform.InverseTransformPoint(origin));
             var frameRotation = UnityRotationToRos(Quaternion.Inverse(partTransform.rotation) * rotation);
-            var resolvedName = ResolvePartName();
+            var resolvedName = ResolveSensorId();
             var universalTime = Planetarium.GetUniversalTime();
             for (var chunkIndex = 0; chunkIndex < chunkCount; chunkIndex++)
             {
@@ -272,7 +236,6 @@ namespace KerbalLiDAR
                 AppendNumber(builder, "frameBytes", rgb.Length, false);
                 AppendString(builder, "sha256", checksum, false);
                 AppendString(builder, "sensorId", resolvedName, false);
-                AppendString(builder, "partName", resolvedName, false);
                 AppendString(builder, "vessel", vessel != null ? vessel.vesselName : "", false);
                 AppendNumber(builder, "partFlightId", part != null ? (long)part.flightID : 0L, false);
                 AppendDouble(builder, "universalTime", universalTime, false);
@@ -305,8 +268,7 @@ namespace KerbalLiDAR
                 AppendString(builder, "type", "ksp_camera_inactive", true);
                 AppendNumber(builder, "version", ProtocolVersion, false);
                 AppendString(builder, "source", "rgb_camera", false);
-                AppendString(builder, "sensorId", ResolvePartName(), false);
-                AppendString(builder, "partName", ResolvePartName(), false);
+                AppendString(builder, "sensorId", ResolveSensorId(), false);
                 AppendNumber(builder, "partFlightId", part != null ? (long)part.flightID : 0L, false);
                 builder.Append('}');
                 var datagram = Encoding.UTF8.GetBytes(builder.ToString());
@@ -352,118 +314,11 @@ namespace KerbalLiDAR
             imageSizeStatus = imageWidth.ToString(CultureInfo.InvariantCulture) + " x " + imageHeight.ToString(CultureInfo.InvariantCulture);
         }
 
-        private void MaintainUniquePartName()
-        {
-            if (Time.realtimeSinceStartup < nextNameValidationTime)
-            {
-                return;
-            }
-            nextNameValidationTime = Time.realtimeSinceStartup + 0.5f;
-            AssignUniquePartName(partName, true);
-        }
-
-        private string AssignUniquePartName(string requestedName, bool markEditorModified)
-        {
-            var baseName = NormalizeName(requestedName);
-            if (string.IsNullOrEmpty(baseName))
-            {
-                baseName = "rgb_camera";
-            }
-            var used = CollectOtherSensorNames();
-            var unique = baseName;
-            var suffix = 2;
-            while (used.Contains(unique))
-            {
-                var suffixText = "_" + suffix.ToString(CultureInfo.InvariantCulture);
-                var length = Math.Min(baseName.Length, MaxPartNameLength - suffixText.Length);
-                unique = baseName.Substring(0, length).TrimEnd('_') + suffixText;
-                suffix++;
-            }
-            var changed = !string.Equals(partName, unique, StringComparison.Ordinal);
-            partName = unique;
-            if (changed && markEditorModified && HighLogic.LoadedSceneIsEditor
-                && EditorLogic.fetch != null && EditorLogic.fetch.ship != null)
-            {
-                GameEvents.onEditorShipModified.Fire(EditorLogic.fetch.ship);
-            }
-            return unique;
-        }
-
-        private HashSet<string> CollectOtherSensorNames()
-        {
-            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            IList<Part> parts = null;
-            if (HighLogic.LoadedSceneIsEditor && EditorLogic.fetch != null && EditorLogic.fetch.ship != null)
-            {
-                parts = EditorLogic.fetch.ship.parts;
-            }
-            else if (vessel != null)
-            {
-                parts = vessel.parts;
-            }
-            if (parts == null)
-            {
-                return names;
-            }
-            foreach (var candidatePart in parts)
-            {
-                if (candidatePart == null || candidatePart == part)
-                {
-                    continue;
-                }
-                foreach (PartModule candidateModule in candidatePart.Modules)
-                {
-                    var camera = candidateModule as ModuleKerbalRgbCamera;
-                    if (camera != null)
-                    {
-                        var cameraName = NormalizeName(camera.partName);
-                        if (!string.IsNullOrEmpty(cameraName)) names.Add(cameraName);
-                    }
-                    var lidar = candidateModule as ModuleKerbalLidar;
-                    if (lidar != null)
-                    {
-                        var lidarName = NormalizeName(!string.IsNullOrEmpty(lidar.partName) ? lidar.partName : lidar.lidarName);
-                        if (!string.IsNullOrEmpty(lidarName)) names.Add(lidarName);
-                    }
-                }
-            }
-            return names;
-        }
-
-        private string ResolvePartName()
+        private string ResolveSensorId()
         {
             return ModuleKerbalRosSensorId.Resolve(
                 part,
                 string.IsNullOrEmpty(partName) ? "rgb_camera" : partName);
-        }
-
-        private static string NormalizeName(string value)
-        {
-            if (string.IsNullOrWhiteSpace(value)) return string.Empty;
-            var builder = new StringBuilder(Math.Min(value.Length, MaxPartNameLength));
-            var underscore = false;
-            for (var index = 0; index < value.Length && builder.Length < MaxPartNameLength; index++)
-            {
-                var character = value[index];
-                var letter = (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z');
-                var digit = character >= '0' && character <= '9';
-                if (letter || digit)
-                {
-                    builder.Append(char.ToLowerInvariant(character));
-                    underscore = false;
-                }
-                else if (!underscore && builder.Length > 0)
-                {
-                    builder.Append('_');
-                    underscore = true;
-                }
-            }
-            var normalized = builder.ToString().Trim('_');
-            if (!string.IsNullOrEmpty(normalized) && char.IsDigit(normalized[0]))
-            {
-                normalized = "_" + normalized;
-            }
-            return normalized.Length <= MaxPartNameLength ? normalized : normalized.Substring(0, MaxPartNameLength);
         }
 
         private void EnsureUdpClient()

@@ -73,5 +73,5 @@ active vesselモデルと`partFlightId`が対応した場合、`frame_id`は機�
 
 - `GameData/KerbalLiDAR/Parts/Lidar2D/part.cfg`
 - `GameData/KerbalLiDAR/Parts/Lidar3D/part.cfg`
-- `Source/KerbalLiDAR/ModuleKerbalLidar.cs`
+- `Source/KerbalLiDAR/Api/Ksp/ModuleKerbalLidar.cs`
 - `Ros2/ksp_lidar_bridge/ksp_lidar_bridge/packet_conversion.py`

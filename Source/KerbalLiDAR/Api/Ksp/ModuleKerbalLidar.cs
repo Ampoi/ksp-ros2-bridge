@@ -179,7 +179,6 @@ namespace KerbalLiDAR
         {
             base.OnStart(state);
             NormalizeConfig();
-            EnsureUniquePartName(false);
             LoadConfiguredVisualModel();
             UpdateUi();
 
@@ -212,8 +211,6 @@ namespace KerbalLiDAR
             {
                 return;
             }
-
-            MaintainUniquePartName();
 
             if (radarLinesVisible)
             {
@@ -339,11 +336,7 @@ namespace KerbalLiDAR
             AppendProperty(packetBuilder, "type", "ksp_lidar_inactive", true);
             AppendProperty(packetBuilder, "version", JsonVersion, false);
             AppendProperty(packetBuilder, "mode", Is3DMode() ? "3D" : "2D", false);
-            var resolvedPartName = ResolvePartName();
-            AppendProperty(packetBuilder, "sensorId", resolvedPartName, false);
-            AppendProperty(packetBuilder, "name", resolvedPartName, false);
-            AppendProperty(packetBuilder, "partName", resolvedPartName, false);
-            AppendProperty(packetBuilder, "lidarName", resolvedPartName, false);
+            AppendProperty(packetBuilder, "sensorId", ResolveSensorId(), false);
             AppendProperty(packetBuilder, "vessel", vessel != null ? vessel.vesselName : "", false);
             AppendProperty(packetBuilder, "partFlightId", part != null ? (long)part.flightID : 0L, false);
             packetBuilder.Append('}');
@@ -515,11 +508,7 @@ namespace KerbalLiDAR
             AppendProperty(packetBuilder, "type", "ksp_lidar_scan", true);
             AppendProperty(packetBuilder, "version", JsonVersion, false);
             AppendProperty(packetBuilder, "mode", Is3DMode() ? "3D" : "2D", false);
-            var resolvedPartName = ResolvePartName();
-            AppendProperty(packetBuilder, "sensorId", resolvedPartName, false);
-            AppendProperty(packetBuilder, "name", resolvedPartName, false);
-            AppendProperty(packetBuilder, "partName", resolvedPartName, false);
-            AppendProperty(packetBuilder, "lidarName", resolvedPartName, false);
+            AppendProperty(packetBuilder, "sensorId", ResolveSensorId(), false);
             AppendProperty(packetBuilder, "vessel", vessel != null ? vessel.vesselName : "", false);
             AppendProperty(packetBuilder, "partFlightId", part != null ? (long)part.flightID : 0L, false);
             AppendProperty(packetBuilder, "universalTime", Planetarium.GetUniversalTime(), false);
@@ -886,22 +875,10 @@ namespace KerbalLiDAR
             Events["ToggleRadarLines"].guiName = radarLinesVisible ? "Hide Laser Preview" : "Show Laser Preview";
         }
 
-        private string ResolvePartName()
+        private string ResolveSensorId()
         {
             var legacy = !string.IsNullOrEmpty(partName) ? partName : lidarName;
-            var resolved = ModuleKerbalRosSensorId.Resolve(part, legacy);
-            if (!string.IsNullOrEmpty(resolved)) return resolved;
-
-            if (!string.IsNullOrEmpty(lidarName))
-            {
-                return lidarName;
-            }
-
-            var partTitle = part != null && part.partInfo != null && !string.IsNullOrEmpty(part.partInfo.name)
-                ? part.partInfo.name
-                : "lidar";
-            var partFlightId = part != null ? ((long)part.flightID).ToString(CultureInfo.InvariantCulture) : "0";
-            return partTitle + "_" + partFlightId;
+            return ModuleKerbalRosSensorId.Resolve(part, legacy);
         }
 
     }

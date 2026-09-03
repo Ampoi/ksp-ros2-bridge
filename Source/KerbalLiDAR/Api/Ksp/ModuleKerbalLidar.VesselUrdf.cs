@@ -197,6 +197,19 @@ namespace KerbalLiDAR
             var urdf = BuildProxyUrdf(orderedParts, linkNames, namePrefix);
             modelId = Sha256Hex(Encoding.UTF8.GetBytes(urdf));
 
+            var rootPart = orderedParts[0];
+            var reference = vessel.ReferenceTransform;
+            var baseRotationWorld = reference == null
+                ? Quaternion.identity
+                : Quaternion.LookRotation(reference.up.normalized, (-reference.forward).normalized);
+            var worldToBaseRotation = Quaternion.Inverse(baseRotationWorld);
+            var rootPositionInBase = UnityVectorToRos(
+                worldToBaseRotation * (rootPart.transform.position - vessel.CoM)
+            );
+            var rootRotationInBase = UnityRotationToRos(
+                worldToBaseRotation * rootPart.transform.rotation
+            );
+
             var bundle = new StringBuilder(urdf.Length + orderedParts.Count * 96 + 512);
             bundle.Append('{');
             AppendProperty(bundle, "type", VesselProxyType, true);
@@ -206,6 +219,18 @@ namespace KerbalLiDAR
             AppendProperty(bundle, "geometryPolicy", "primitive_proxy_only", false);
             AppendProperty(bundle, "persistencePolicy", "memory_only", false);
             AppendProperty(bundle, "rootFrame", linkNames[orderedParts[0]], false);
+            AppendArrayProperty(
+                bundle,
+                "baseToRootPosition",
+                delegate(StringBuilder builder) { AppendVector3OrNull(builder, rootPositionInBase, true); },
+                false
+            );
+            AppendArrayProperty(
+                bundle,
+                "baseToRootRotation",
+                delegate(StringBuilder builder) { AppendQuaternion(builder, rootRotationInBase); },
+                false
+            );
             AppendProperty(bundle, "urdf", urdf, false);
             AppendPropertyPrefix(bundle, "partFrames", false);
             bundle.Append('[');

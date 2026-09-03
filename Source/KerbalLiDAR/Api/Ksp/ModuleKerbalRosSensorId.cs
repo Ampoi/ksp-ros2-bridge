@@ -1,14 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Text;
 using UnityEngine;
+using KerbalLiDAR.Domain;
 
 namespace KerbalLiDAR
 {
     public sealed class ModuleKerbalRosSensorId : PartModule
     {
-        private const int MaxLength = 64;
         private const float ValidationInterval = 0.5f;
 
         [KSPField(isPersistant = true, guiActiveEditor = true, guiName = "ROS2 Sensor ID")]
@@ -55,7 +54,7 @@ namespace KerbalLiDAR
                     new DialogGUITextInput(
                         pending,
                         false,
-                        MaxLength,
+                        SensorIdentity.MaxLength,
                         delegate(string value) { pending = value; return value; },
                         280f),
                     new DialogGUIButton(
@@ -91,35 +90,7 @@ namespace KerbalLiDAR
 
         public static string Normalize(string value)
         {
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                return string.Empty;
-            }
-
-            var builder = new StringBuilder(Math.Min(value.Length, MaxLength));
-            var previousUnderscore = false;
-            for (var index = 0; index < value.Length && builder.Length < MaxLength; index++)
-            {
-                var character = char.ToLowerInvariant(value[index]);
-                var accepted = character >= 'a' && character <= 'z' || character >= '0' && character <= '9';
-                if (accepted)
-                {
-                    builder.Append(character);
-                    previousUnderscore = false;
-                }
-                else if (!previousUnderscore && builder.Length > 0)
-                {
-                    builder.Append('_');
-                    previousUnderscore = true;
-                }
-            }
-
-            var normalized = builder.ToString().Trim('_');
-            if (!string.IsNullOrEmpty(normalized) && normalized[0] >= '0' && normalized[0] <= '9')
-            {
-                normalized = "_" + normalized;
-            }
-            return normalized.Length <= MaxLength ? normalized : normalized.Substring(0, MaxLength);
+            return SensorIdentity.Normalize(value);
         }
 
         private string AssignUnique(string requested, bool markModified)
@@ -136,14 +107,13 @@ namespace KerbalLiDAR
             while (used.Contains(unique))
             {
                 var suffixText = "_" + suffix.ToString(CultureInfo.InvariantCulture);
-                var length = Math.Max(1, Math.Min(baseId.Length, MaxLength - suffixText.Length));
+                var length = Math.Max(1, Math.Min(baseId.Length, SensorIdentity.MaxLength - suffixText.Length));
                 unique = baseId.Substring(0, length).TrimEnd('_') + suffixText;
                 suffix++;
             }
 
             var changed = !string.Equals(sensorId, unique, StringComparison.Ordinal);
             sensorId = unique;
-            SyncLegacyNames(unique);
             if (changed && markModified && HighLogic.LoadedSceneIsEditor &&
                 EditorLogic.fetch != null && EditorLogic.fetch.ship != null)
             {
@@ -175,25 +145,6 @@ namespace KerbalLiDAR
             }
             var camera = part.FindModuleImplementing<ModuleKerbalRgbCamera>();
             return camera == null ? string.Empty : camera.partName;
-        }
-
-        private void SyncLegacyNames(string value)
-        {
-            if (part == null)
-            {
-                return;
-            }
-            var lidar = part.FindModuleImplementing<ModuleKerbalLidar>();
-            if (lidar != null)
-            {
-                lidar.partName = value;
-                lidar.lidarName = value;
-            }
-            var camera = part.FindModuleImplementing<ModuleKerbalRgbCamera>();
-            if (camera != null)
-            {
-                camera.partName = value;
-            }
         }
 
         private HashSet<string> OtherSensorIds()

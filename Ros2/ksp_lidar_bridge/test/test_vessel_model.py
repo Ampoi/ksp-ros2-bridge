@@ -49,7 +49,7 @@ def proxy_urdf(geometry='<box size="1 2 3"/>'):
 </robot>'''
 
 
-def chunk_packets(urdf=None, chunk_size=40):
+def chunk_packets(urdf=None, chunk_size=40, include_base_pose=True):
     urdf = proxy_urdf() if urdf is None else urdf
     model_id = hashlib.sha256(urdf.encode()).hexdigest()
     bundle = {
@@ -66,6 +66,9 @@ def chunk_packets(urdf=None, chunk_size=40):
             {"partFlightId": 11, "frame": f"{NAME_PREFIX}_link_0001"},
         ],
     }
+    if include_base_pose:
+        bundle["baseToRootPosition"] = [1.25, -2.5, 3.75]
+        bundle["baseToRootRotation"] = [0.0, 0.0, 2.0, 2.0]
     compressed = gzip.compress(json.dumps(bundle, separators=(",", ":")).encode())
     digest = hashlib.sha256(compressed).hexdigest()
     chunks = [
@@ -101,12 +104,27 @@ class UrdfChunkAssemblerTests(unittest.TestCase):
 
         self.assertIsNotNone(model)
         self.assertEqual(model.root_frame, f"{NAME_PREFIX}_link_0000")
+        self.assertEqual(model.base_to_root_translation, (1.25, -2.5, 3.75))
+        self.assertAlmostEqual(model.base_to_root_rotation[2], 2 ** -0.5)
+        self.assertAlmostEqual(model.base_to_root_rotation[3], 2 ** -0.5)
         self.assertEqual(model.part_frames[11], f"{NAME_PREFIX}_link_0001")
         self.assertEqual(len(model.transforms), 1)
         transform = model.transforms[0]
         self.assertEqual(transform.translation, (1.0, 2.0, 3.0))
         self.assertAlmostEqual(transform.rotation[2], 2 ** -0.5)
         self.assertAlmostEqual(transform.rotation[3], 2 ** -0.5)
+
+    def test_legacy_v1_proxy_defaults_to_identity_base_pose(self):
+        assembler = UrdfChunkAssembler()
+        model = None
+        for packet in chunk_packets(include_base_pose=False):
+            candidate = assembler.consume(packet)
+            if candidate is not None:
+                model = candidate
+
+        self.assertIsNotNone(model)
+        self.assertEqual(model.base_to_root_translation, (0.0, 0.0, 0.0))
+        self.assertEqual(model.base_to_root_rotation, (0.0, 0.0, 0.0, 1.0))
 
     def test_rejects_mesh_geometry_and_asset_uri(self):
         packets = chunk_packets(proxy_urdf('<mesh filename="GameData/Squad/model.mu"/>'))
