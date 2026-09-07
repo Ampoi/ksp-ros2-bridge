@@ -27,7 +27,7 @@ from ...domain.control_law import (
     body_wrench_for_setpoint,
     rate_guard_body_torque,
 )
-from ...domain.math3d import Quaternion, Vector3, linear_ramp_fraction, scale
+from ...domain.math3d import Quaternion, Vector3, add, linear_ramp_fraction, scale
 
 
 class SetpointController(Node):
@@ -69,6 +69,7 @@ class SetpointController(Node):
         self.suppress_sas = bool(self.get_parameter("suppress_sas").value)
         self.state_timeout = Duration(seconds=self._positive("state_timeout_sec"))
         self.setpoint_timeout = Duration(seconds=self._positive("setpoint_timeout_sec"))
+        self.extrapolate_setpoint = bool(self.get_parameter("extrapolate_setpoint").value)
         self.safety_cooldown = Duration(
             seconds=self._positive("control_safety_cooldown_sec")
         )
@@ -145,19 +146,20 @@ class SetpointController(Node):
             "lease_renew_period_sec": 0.5,
             "suppress_sas": True,
             "command_timeout_sec": 0.25,
-            "position_kp": 5.0,
-            "velocity_kd": 20.0,
-            "attitude_kp": 80.0,
-            "angular_kd": 400.0,
-            "max_force": 20.0,
-            "max_torque": 2.0,
-            "attitude_hold_max_torque": 0.5,
+            "position_kp": 500.0,
+            "velocity_kd": 2000.0,
+            "attitude_kp": 800.0,
+            "angular_kd": 4000.0,
+            "max_force": 2000.0,
+            "max_torque": 250.0,
+            "attitude_hold_max_torque": 150.0,
             "attitude_hold_rate_limit_deg_s": 2.5,
-            "detumble_kd": 20.0,
-            "detumble_max_torque": 1.0,
+            "detumble_kd": 1000.0,
+            "detumble_max_torque": 500.0,
             "command_ramp_sec": 3.0,
             "state_timeout_sec": 0.5,
             "setpoint_timeout_sec": 0.5,
+            "extrapolate_setpoint": False,
             "control_safety_cooldown_sec": 0.75,
             "control_rate_hz": 20.0,
         }
@@ -289,9 +291,19 @@ class SetpointController(Node):
             state = "detumbling"
         elif mode in (ControlSetpoint.MODE_ATTITUDE_HOLD, ControlSetpoint.MODE_SIX_DOF):
             desired = self.setpoint
+            desired_position = (desired.position.x, desired.position.y, desired.position.z)
+            if self.extrapolate_setpoint:
+                dt = (Time.from_msg(self.pose.header.stamp) - Time.from_msg(desired.header.stamp)).nanoseconds * 1.0e-9
+                if abs(dt) > self.setpoint_timeout.nanoseconds * 1.0e-9:
+                    self._publish_wrench(now, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+                    self._release_authority(now)
+                    self._publish_status("setpoint_timestamp_mismatch")
+                    return
+                desired_position = add(desired_position, scale(
+                    (desired.linear_velocity.x, desired.linear_velocity.y, desired.linear_velocity.z), dt))
             force, torque = body_wrench_for_setpoint(
                 self._position(), orientation, self._linear_velocity(), angular_velocity_body,
-                (desired.position.x, desired.position.y, desired.position.z),
+                desired_position,
                 (desired.orientation.x, desired.orientation.y, desired.orientation.z, desired.orientation.w),
                 (desired.linear_velocity.x, desired.linear_velocity.y, desired.linear_velocity.z),
                 (desired.angular_velocity.x, desired.angular_velocity.y, desired.angular_velocity.z),
@@ -301,15 +313,17 @@ class SetpointController(Node):
                     self.max_torque, self.attitude_hold_max_torque
                 ),
                 mode == ControlSetpoint.MODE_SIX_DOF,
+                self.attitude_hold_rate_limit,
             )
-            if mode == ControlSetpoint.MODE_ATTITUDE_HOLD:
-                torque = rate_guard_body_torque(
-                    torque,
-                    angular_velocity_body,
-                    self.attitude_hold_rate_limit,
-                    self.angular_kd,
-                    min(self.max_torque, self.attitude_hold_max_torque),
-                )
+            torque = rate_guard_body_torque(
+                torque,
+                angular_velocity_body,
+                self.attitude_hold_rate_limit,
+                self.angular_kd,
+                self.max_torque if mode == ControlSetpoint.MODE_SIX_DOF else min(
+                    self.max_torque, self.attitude_hold_max_torque
+                ),
+            )
             state = "six_dof" if mode == ControlSetpoint.MODE_SIX_DOF else "attitude_hold"
         else:
             self._publish_wrench(now, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))

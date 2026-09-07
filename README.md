@@ -217,6 +217,8 @@ Ground Truthは操作機体を選択した地点を原点とする東・北・�
 
 `Ros2/ksp_nav2_bringup`はbridgeと分離したROS2 integration packageです。2D `LaserScan`だけからscan-to-scan ICP odometryを作り、SLAM Toolbox / AMCL / Nav2へ接続します。planar controllerは`cmd_vel`が有効な間だけauthority leaseを取得し、停止後に解放します。起動方法と制約は[2D LiDAR MappingとNav2](docs/guide/nav2.md)を参照してください。
 
+実機体を使って上から実行できる手順は、[`test A`デブリ周回](Demo/debris_orbit/README.md#実機の準備と起動)と[`rober A` SLAM + Nav2](Ros2/ksp_nav2_bringup/README.md#rober-aで上から順に実行する手順)に分けています。デブリ周回は位置推定とRCS制御を分離し、真値の相対位置から始めて3D LiDAR推定へ切り替えられます。RVizで対象点群・視線・相対軌跡を表示します。`Development/commands`のKSP準備commandは再現試験専用で、runtime source/APIとは分離されています。
+
 ## ROS2モーター
 
 追加パーツ:

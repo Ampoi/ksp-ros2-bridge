@@ -33,6 +33,7 @@ def body_wrench_for_setpoint(
     max_force: float,
     max_torque: float,
     translation_enabled: bool,
+    angular_rate_limit: float = 0.0,
 ) -> Tuple[Vector3, Vector3]:
     force_world = (0.0, 0.0, 0.0)
     if translation_enabled:
@@ -51,14 +52,19 @@ def body_wrench_for_setpoint(
     desired_angular_velocity_body = rotate_vector(
         world_to_body, desired_angular_velocity
     )
+    # Treat attitude error as a requested body rate before closing the inner
+    # angular-velocity loop.  Clamping that request prevents a large look-at
+    # step from pinning torque at its limit until the craft has already spun
+    # past the safety rate.  With no rate limit this is algebraically the same
+    # PD law as attitude_kp * error + angular_kd * rate_error.
+    requested_rate_body = add(
+        desired_angular_velocity_body,
+        scale(attitude_error_body, attitude_kp / angular_kd),
+    )
+    if angular_rate_limit > 0.0:
+        requested_rate_body = clamp_norm(requested_rate_body, angular_rate_limit)
     torque_body = clamp_norm(
-        add(
-            scale(attitude_error_body, attitude_kp),
-            scale(
-                subtract(desired_angular_velocity_body, angular_velocity_body),
-                angular_kd,
-            ),
-        ),
+        scale(subtract(requested_rate_body, angular_velocity_body), angular_kd),
         max_torque,
     )
     return rotate_vector(world_to_body, force_world), torque_body

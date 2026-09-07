@@ -21,6 +21,7 @@ planar_wrench_controller:
     wrench_command_topic: /ksp_vessel/control/wrench_command
     authority_command_topic: /ksp_vessel/control/authority/command
     authority_state_topic: /ksp_vessel/control/authority/state
+    wrench_feedback_topic: /ksp_vessel/control/wrench_feedback
     vessel_lifecycle_topic: /ksp_vessel/lifecycle
     controller_id: nav2_planar_controller
     control_priority: 80
@@ -40,6 +41,7 @@ planar_wrench_controller:
     command_timeout: 0.5
     odom_timeout: 0.25
     brake_duration: 0.5
+    control_safety_cooldown_sec: 0.75
 
 amcl:
   ros__parameters:

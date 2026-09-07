@@ -3,5 +3,12 @@
   "buildCommand": "npm run docs:build",
   "cleanUrls": true,
   "installCommand": "npm ci",
-  "outputDirectory": "docs/.vitepress/dist"
+  "outputDirectory": "docs/.vitepress/dist",
+  "redirects": [
+    {
+      "source": "/",
+      "destination": "/guide/overview",
+      "permanent": false
+    }
+  ]
 }

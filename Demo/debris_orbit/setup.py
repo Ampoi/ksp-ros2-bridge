@@ -15,8 +15,9 @@ setup(
         ("share/" + package_name, ["package.xml"]),
         (os.path.join("share", package_name, "launch"), glob("launch/*.launch.py")),
         (os.path.join("share", package_name, "config"), glob("config/*.yaml")),
+        (os.path.join("share", package_name, "rviz"), glob("rviz/*.rviz")),
     ],
-    install_requires=["setuptools"],
+    install_requires=["setuptools", "numpy", "scipy"],
     zip_safe=True,
     maintainer="Kerbal LiDAR Lab",
     maintainer_email="user@example.com",
@@ -25,6 +26,7 @@ setup(
     entry_points={
         "console_scripts": [
             "debris_orbit_node = debris_orbit.node:main",
+            "target_estimator = debris_orbit.target_node:main",
         ]
     },
 )

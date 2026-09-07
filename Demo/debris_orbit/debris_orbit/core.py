@@ -79,6 +79,17 @@ def scale(a: Vector3, value: float) -> Vector3:
     return (a[0] * value, a[1] * value, a[2] * value)
 
 
+def predict_linear_at(
+    position: Vector3,
+    velocity: Vector3,
+    sample_time_sec: float,
+    reference_time_sec: float,
+) -> Vector3:
+    """Predict at an explicit data timestamp, never implicitly at wall clock."""
+    elapsed = max(0.0, reference_time_sec - sample_time_sec)
+    return add(position, scale(velocity, elapsed))
+
+
 def dot(a: Vector3, b: Vector3) -> float:
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 

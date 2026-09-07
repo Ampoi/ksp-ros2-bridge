@@ -4,6 +4,7 @@ KerbalLiDARのUDP JSONを受け取り、LiDAR、RGBカメラ、ロボティク�
 
 kRPCは使用しません。このbridgeはKerbalLiDAR KSPプラグインと直接UDP通信し、kRPCサーバーやPythonの`krpc`パッケージには依存しません。
 
+- Default vessel IMU: `/ksp_vessel/imu/data_raw` (`sensor_msgs/msg/Imu`, 3軸角速度rad/s・比力m/s²、`base_link`、最大30 Hz)。全機体で追加パーツ不要。操作中の機体に自動追従し、姿勢なし（`orientation_covariance[0]=-1`）。静止時は上向き約+g、自由落下時は約0。
 - 2D LiDAR: `sensor_msgs/msg/LaserScan`
 - 3D LiDAR: `sensor_msgs/msg/PointCloud2`
 - 2D Topic: `/ksp_vessel/lidar_2d/<sensor_id>/scan`
@@ -26,6 +27,7 @@ kRPCは使用しません。このbridgeはKerbalLiDAR KSPプラグインと直�
 - Wrench feedback: `/ksp_vessel/control/wrench_feedback` (`WrenchFeedback`)
 - Vessel lifecycle: `/ksp_vessel/lifecycle` (`VesselLifecycle`)
 - Ground truth: `/ksp_vessel/ground_truth/{pose,twist,twist_body,acceleration}`
+- Nearby vessel truth: `/ksp_vessel/ground_truth/nearby_vessels` (`NearbyVessels`), containing the observer and up to 32 loaded, unpacked nearby vessels in one timestamp and world origin. The debris demo can subtract these absolute states before using LiDAR estimates.
 - Separation actuators: `SeparationCommand/State` for stock decouplers and procedural fairings
 - Docking ports: `/ksp_vessel/docking_ports/<id>/{state,command}` (`DockingPortState/Command`)
 - Selected docking camera: `/ksp_vessel/docking_ports/<id>/camera/{image_raw,camera_info}`

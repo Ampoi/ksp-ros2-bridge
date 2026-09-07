@@ -9,6 +9,18 @@ Topicは、操作中の機体に属するものを`/ksp_vessel`、bridgeプロ�
 | Publish | `/ros2_ksp/status` | `std_msgs/msg/String` | Reliable / Transient Local。bridgeの稼働状態 |
 | Publish | `/ros2_ksp/diagnostics` | `diagnostic_msgs/msg/DiagnosticArray` | モーター診断とWrench配分残差 |
 
+## IMU
+
+全機体で追加パーツ・設定なしに、操作中の機体の3軸ジャイロと3軸加速度計を出力します。機体切替時も同じTopicを使用します。
+
+| 方向 | Topic | 型 | QoS / 内容 |
+|---|---|---|---|
+| Publish | `/ksp_vessel/imu/data_raw` | `sensor_msgs/msg/Imu` | Best Effort / Volatile / depth 10。物理サンプル更新時、最大30 Hz |
+
+`header.frame_id=base_link`、軸はX前方・Y左・Z上。`angular_velocity` はrad/s、`linear_acceleration` はm/s²の比力（慣性加速度−重力）です。Z上向きで静止していれば約+g、自由落下中は約0となります。KSPの `perturbation_immediate` を機体軸へ変換し、ノイズやバイアスは追加しません。絶対姿勢は測定しないため `orientation_covariance[0]=-1`、角速度・加速度の共分散は未知を表す全要素0です。[ROS IMU規約（REP-145）](https://www.ros.org/reps/rep-0145.html) の `imu/data_raw` に対応します。
+
+タイムスタンプはKSPのシミュレーション時刻を既存bridge時計に写像します。Flight以外、物理演算停止（packed）、ポーズ中は新規測定を出力しません。ロード・機体切替・unpack直後は1サンプル待ちます。仮想センサーは機体重心の比力を機体軸で表すもので、個別パーツ位置の回転による加速度はモデル化しません。非アクティブ機体の個別Topicは作成しません。
+
 ## 機体・モデル
 
 | 方向 | Topic | 型 | QoS / 内容 |
@@ -19,6 +31,7 @@ Topicは、操作中の機体に属するものを`/ksp_vessel`、bridgeプロ�
 | Subscribe | `/ksp_vessel/control/wrench_command` | `BodyWrenchCommand` | Reliable。lease-bound `base_link` Wrench |
 | Publish | `/ksp_vessel/control/wrench_feedback` | `WrenchFeedback` | requested / allocated / achieved / residual |
 | Publish | `/ksp_vessel/ground_truth/pose` | `geometry_msgs/msg/PoseStamped` | Best Effort。ENU位置・姿勢 |
+| Publish | `/ksp_vessel/ground_truth/nearby_vessels` | `ksp_ros2_interfaces/msg/NearbyVessels` | 自機と近隣機体の同時刻・同原点の絶対位置と速度。最大32機、2500 m以内、同天体・loaded/unpacked |
 | Publish | `/ksp_vessel/ground_truth/twist` | `geometry_msgs/msg/TwistStamped` | Best Effort。ENU速度 |
 | Publish | `/ksp_vessel/ground_truth/twist_body` | `geometry_msgs/msg/TwistStamped` | Best Effort。body速度 |
 | Publish | `/ksp_vessel/ground_truth/acceleration` | `geometry_msgs/msg/AccelStamped` | Best Effort。ENU加速度 |

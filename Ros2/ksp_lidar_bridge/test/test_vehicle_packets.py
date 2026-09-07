@@ -8,6 +8,7 @@ from ksp_lidar_bridge.vehicle_packets import (
     body_wrench_command,
     control_authority_command,
     ground_truth_from_packet,
+    nearby_vessels_from_packet,
 )
 
 
@@ -172,3 +173,32 @@ class VehicleCommandTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NearbyTruthTests(unittest.TestCase):
+    def packet(self):
+        return dict(type="ksp_nearby_vessels", version=1, vesselId="observer",
+            originSequence=7, universalTime=123., position=[1e8, 0., 0.],
+            linearVelocity=[2200., 0., 0.], vessels=[dict(vesselId="debris", vessel="debris",
+            isDebris=True, position=[1e8 + 15.125, 0., 0.], linearVelocity=[2200.25, 0., 0.])])
+
+    def test_shared_absolute_origin_preserves_submetre_relative_motion(self):
+        result = nearby_vessels_from_packet(self.packet())
+        self.assertEqual(result.vessels[0].position[0] - result.observer_position[0], 15.125)
+        self.assertEqual(result.vessels[0].linear_velocity[0] - result.observer_linear_velocity[0], .25)
+        self.assertEqual(result.origin_sequence, 7)
+
+    def test_rejects_duplicate_self_and_nonfinite_states(self):
+        for invalid in ("self", "duplicate", "nonfinite", "boolean"):
+            packet = self.packet()
+            if invalid == "self": packet["vessels"][0]["vesselId"] = "observer"
+            if invalid == "duplicate": packet["vessels"] *= 2
+            if invalid == "nonfinite": packet["vessels"][0]["position"][0] = float("nan")
+            if invalid == "boolean": packet["vessels"][0]["isDebris"] = "false"
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                nearby_vessels_from_packet(packet)
+
+    def test_empty_snapshot_reports_disappearance(self):
+        packet = self.packet()
+        packet["vessels"] = []
+        self.assertEqual(nearby_vessels_from_packet(packet).vessels, ())

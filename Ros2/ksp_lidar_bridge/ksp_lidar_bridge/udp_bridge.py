@@ -36,15 +36,17 @@ from ksp_ros2_interfaces.msg import (
     WheelState,
     WrenchFeedback,
     VesselLifecycle,
+    NearbyVessel,
+    NearbyVessels,
 )
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy._rclpy_pybind11 import RCLError
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.time import Time as RosTime
-from sensor_msgs.msg import CameraInfo, Image, JointState, LaserScan, PointCloud2, PointField
+from sensor_msgs.msg import CameraInfo, Image, Imu, JointState, LaserScan, PointCloud2, PointField
 from std_msgs.msg import Float64, String
-from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
+from tf2_ros import TransformBroadcaster
 from trajectory_msgs.msg import JointTrajectory
 
 from .camera_packets import (
@@ -92,9 +94,12 @@ from .vehicle_packets import (
     control_authority_command,
     encode_vehicle_command,
     ground_truth_from_packet,
+    nearby_vessels_from_packet,
 )
 from .domain.control import authority_state_from_packet, wrench_feedback_from_packet
 from .domain.time_alignment import SimulationClock, extrapolate_pose
+from .static_transforms import StaticTransformSnapshot
+from .imu_packets import imu_from_packet
 
 
 def positive_float(value: str) -> float:
@@ -274,7 +279,7 @@ class KerbalLidarUdpBridge(Node):
             String, f"{self.bridge_prefix}/status", model_qos
         )
         self.transform_broadcaster = TransformBroadcaster(self)
-        self.static_transform_broadcaster = StaticTransformBroadcaster(self)
+        self.static_transform_broadcaster = StaticTransformSnapshot(self)
         self.static_sensor_transforms: Dict[str, Tuple[Any, ...]] = {}
         self.model_assembler = UrdfChunkAssembler()
         self.active_model: Optional[VesselProxyModel] = None
@@ -388,6 +393,9 @@ class KerbalLidarUdpBridge(Node):
         self.ground_truth_pose_publisher = self.create_publisher(
             PoseStamped, f"{ground_truth_prefix}/pose", state_qos
         )
+        self.nearby_vessels_publisher = self.create_publisher(
+            NearbyVessels, f"{ground_truth_prefix}/nearby_vessels", state_qos
+        )
         self.ground_truth_twist_publisher = self.create_publisher(
             TwistStamped, f"{ground_truth_prefix}/twist", state_qos
         )
@@ -396,6 +404,9 @@ class KerbalLidarUdpBridge(Node):
         )
         self.ground_truth_acceleration_publisher = self.create_publisher(
             AccelStamped, f"{ground_truth_prefix}/acceleration", state_qos
+        )
+        self.imu_publisher = self.create_publisher(
+            Imu, f"{self.topic_prefix}/imu/data_raw", state_qos
         )
         self.timer = self.create_timer(0.001, self.poll_udp)
         self.cleanup_timer = self.create_timer(0.25, self.remove_stale_publishers)
@@ -461,8 +472,12 @@ class KerbalLidarUdpBridge(Node):
                 self.publish_motor_state(packet)
             elif packet_type == "ksp_propulsion_state":
                 self.publish_propulsion_state(packet)
+            elif packet_type == "ksp_imu":
+                self.publish_imu(packet)
             elif packet_type == "ksp_ground_truth":
                 self.publish_ground_truth(packet)
+            elif packet_type == "ksp_nearby_vessels":
+                self.publish_nearby_vessels(packet)
             elif packet_type == "ksp_actuator_state":
                 self.publish_actuator_state(packet)
             elif packet_type == "ksp_actuator_manifest":
@@ -473,6 +488,24 @@ class KerbalLidarUdpBridge(Node):
                 self.publish_control_authority_state(packet)
             elif packet_type == "ksp_docking_port_state":
                 self.publish_docking_port_state(packet)
+
+    def publish_imu(self, packet: Dict[str, Any]) -> None:
+        try:
+            state = imu_from_packet(packet)
+        except ValueError as exc:
+            self.get_logger().warning(f"Dropped invalid IMU packet: {exc}")
+            return
+        message = Imu()
+        message.header.stamp = self.stamp_for_packet(packet)
+        message.header.frame_id = "base_link"
+        # A six-axis IMU does not measure absolute orientation. Zero covariance
+        # means unknown, not a claim that the simulated sensor has zero error.
+        message.orientation_covariance[0] = -1.0
+        (message.angular_velocity.x, message.angular_velocity.y,
+         message.angular_velocity.z) = state.angular_velocity
+        (message.linear_acceleration.x, message.linear_acceleration.y,
+         message.linear_acceleration.z) = state.linear_acceleration
+        self.imu_publisher.publish(message)
 
     def publish_packet(self, packet: Dict[str, Any]) -> None:
         mode = str(packet.get("mode", "")).upper()
@@ -610,6 +643,9 @@ class KerbalLidarUdpBridge(Node):
         self.active_model_seen_at = time.monotonic()
         if same_model:
             return
+
+        self.static_transform_broadcaster.clear()
+        self.static_sensor_transforms.clear()
 
         self.robot_description_publisher.publish(String(data=model.urdf))
         self.root_frame_publisher.publish(String(data=model.root_frame))
@@ -769,6 +805,8 @@ class KerbalLidarUdpBridge(Node):
             return
         self.active_model = None
         self.active_model_seen_at = 0.0
+        self.static_transform_broadcaster.clear()
+        self.static_sensor_transforms.clear()
         self.robot_description_publisher.publish(String(data=""))
         self.root_frame_publisher.publish(String(data=""))
         self.publish_vessel_lifecycle(model_ready=False, reason=reason)
@@ -1176,6 +1214,33 @@ class KerbalLidarUdpBridge(Node):
         )
         message.reason = reason or self.lifecycle_reason
         self.vessel_lifecycle_publisher.publish(message)
+
+    def publish_nearby_vessels(self, packet: Dict[str, Any]) -> None:
+        try:
+            state = nearby_vessels_from_packet(packet)
+        except ValueError as exc:
+            self.get_logger().warning(f"Dropped invalid nearby vessel truth: {exc}")
+            return
+        truth = self.latest_ground_truth
+        if (truth is None or state.observer_vessel_id != truth.vessel_id
+                or state.origin_sequence != truth.origin_sequence):
+            return
+        message = NearbyVessels()
+        message.header.stamp = self.stamp_for_universal_time(state.universal_time)
+        message.header.frame_id = "ground_truth_enu"
+        message.observer_vessel_id = state.observer_vessel_id
+        message.origin_sequence = state.origin_sequence
+        p, v = message.observer_position, message.observer_linear_velocity
+        p.x, p.y, p.z = state.observer_position
+        v.x, v.y, v.z = state.observer_linear_velocity
+        for target in state.vessels:
+            item = NearbyVessel()
+            item.vessel_id, item.vessel_name = target.vessel_id, target.vessel_name
+            item.is_debris = target.is_debris
+            item.position.x, item.position.y, item.position.z = target.position
+            item.linear_velocity.x, item.linear_velocity.y, item.linear_velocity.z = target.linear_velocity
+            message.vessels.append(item)
+        self.nearby_vessels_publisher.publish(message)
 
     def publish_ground_truth(self, packet: Dict[str, Any]) -> None:
         try:

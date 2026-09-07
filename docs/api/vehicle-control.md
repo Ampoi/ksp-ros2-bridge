@@ -24,6 +24,8 @@
 
 `BodyWrenchCommand.header.frame_id`は空または`base_link`だけを受け付けます。座標は+X前、+Y左、+Z上、forceはN、torqueはN·mです。`timeout_sec`は0.05〜10秒です。
 
+角速度・トルクもROSの右手系です。Unityからの変換では、位置・力の軸入替に加え、軸性ベクトルの左右反転符号を補正します。角速度はGround Truth姿勢quaternionの時間差分と同じ回転方向になります。
+
 手動確認では、まずlifecycleから実際のIDを確認します。
 
 ```bash
@@ -40,9 +42,11 @@ ros2 run ksp_vehicle_control setpoint_controller --ros-args \
   -p setpoint_topic:=/my_controller/setpoint
 ```
 
+共通controllerの`ATTITUDE_HOLD`と`SIX_DOF`は、姿勢誤差を`attitude_hold_rate_limit_deg_s`以下の目標body角速度へ変換して内側の角速度loopを閉じます。上限を超える回転をさらに加速するtorque成分も除き、制動を優先します。`DETUMBLE`はbody角速度と反対向きのtorqueだけを生成します。
+
 ## 「要求」と「実現」の違い
 
-このAPIはN/N·mを受け取りますが、KSPのnormalized flight-control inputを使うため、指定Wrenchを物理的に厳密に生成するforce sourceではありません。
+このAPIはN/N·mを受け取ります。KSP内部の推進系はt・kN・kN·m系なので、KSP adapter境界で推力・トルクをSIへ変換してから配分し、観測値もSIへ戻して公開します。したがって`20 N`がKSP内部の`20 kN`として扱われることはありません。一方、KSPのnormalized flight-control inputを使うため、指定Wrenchを誤差なく生成する理想force sourceではありません。
 
 RCS配分器は、現在有効な各ノズルについて次をKSPと同じ軸規則で評価し、12個の正負操作channelを解きます。
 
@@ -64,6 +68,8 @@ RCS配分器は、現在有効な各ノズルについて次をKSPと同じ軸�
 | `tracking_error_ratio` | 観測値との差の割合 |
 
 `achieved`にはreaction wheel、タイヤ接触力、空力は含みません。`achieved_quality`に測定遅延と除外対象を明記します。並進による回転や燃料・KSP制御則による差を隠さず、controller側で飽和を判断できます。
+
+型付き`EngineCommand.target_thrust`、`RcsCommand.thrust_limit`、`WheelCommand.max_drive_torque`と対応するstateも同じくN/N·mです。KSP内部単位をROS messageへ直接露出しません。
 
 ## SAS・emergency stop・安全上限
 
@@ -102,6 +108,7 @@ ROS側の上限よりKSP側を大きく設定し、KSP側は故障時の最終�
 | Topic | frame_id | 内容 |
 |---|---|---|
 | `/ksp_vessel/ground_truth/pose` | `ground_truth_enu` | 位置m、姿勢quaternion |
+| `/ksp_vessel/ground_truth/nearby_vessels` | `ground_truth_enu` | 自機と近隣機体の同時刻・同原点の絶対位置・速度。差分から相対状態を算出 |
 | `/ksp_vessel/ground_truth/twist` | `ground_truth_enu` | world-frame速度m/s、角速度rad/s |
 | `/ksp_vessel/ground_truth/twist_body` | `base_link` | body-frame速度m/s、角速度rad/s |
 | `/ksp_vessel/ground_truth/acceleration` | `ground_truth_enu` | world-frame運動学的加速度 |

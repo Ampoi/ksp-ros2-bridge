@@ -50,6 +50,53 @@ class GroundTruthData:
     angular_acceleration: Vector3
 
 
+@dataclass(frozen=True)
+class NearbyVesselData:
+    vessel_id: str
+    vessel_name: str
+    is_debris: bool
+    position: Vector3
+    linear_velocity: Vector3
+
+
+@dataclass(frozen=True)
+class NearbyVesselsData:
+    observer_vessel_id: str
+    origin_sequence: int
+    universal_time: float
+    observer_position: Vector3
+    observer_linear_velocity: Vector3
+    vessels: Tuple[NearbyVesselData, ...]
+
+
+def nearby_vessels_from_packet(packet: Mapping[str, Any]) -> NearbyVesselsData:
+    if packet.get("type") != "ksp_nearby_vessels" or packet.get("version") != 1:
+        raise ValueError("packet is not supported nearby vessel truth")
+    observer = str(packet.get("vesselId") or "")
+    raw = packet.get("vessels")
+    if not observer or not isinstance(raw, list) or len(raw) > 32:
+        raise ValueError("nearby truth requires an observer and at most 32 vessels")
+    vessels = []
+    seen = {observer}
+    for item in raw:
+        if not isinstance(item, Mapping):
+            raise ValueError("nearby vessel must be an object")
+        vessel_id = str(item.get("vesselId") or "")
+        if not vessel_id or vessel_id in seen or not isinstance(item.get("isDebris"), bool):
+            raise ValueError("nearby vessel IDs must be unique and isDebris boolean")
+        seen.add(vessel_id)
+        vessels.append(NearbyVesselData(
+            vessel_id, str(item.get("vessel") or ""), item["isDebris"],
+            _vector(item, "position", 3), _vector(item, "linearVelocity", 3),
+        ))
+    return NearbyVesselsData(
+        observer, max(0, as_int(packet.get("originSequence"), 0)),
+        _finite(packet.get("universalTime"), "universalTime"),
+        _vector(packet, "position", 3), _vector(packet, "linearVelocity", 3),
+        tuple(vessels),
+    )
+
+
 def ground_truth_from_packet(packet: Mapping[str, Any]) -> GroundTruthData:
     if packet.get("type") != "ksp_ground_truth" or packet.get("version") != 1:
         raise ValueError("packet is not supported ground truth")

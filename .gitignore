@@ -17,3 +17,8 @@ docs/.vitepress/cache/
 docs/.vitepress/dist/
 GameData/KerbalLiDAR/Plugins/*.dll
 GameData/KerbalLiDAR/Plugins/*.pdb
+.vercel
+.env*
+
+/debris_orbit_captures/
+/Development/evidence/**/samples.jsonl

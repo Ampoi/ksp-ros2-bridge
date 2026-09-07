@@ -1,50 +1,35 @@
 # debris_orbit デモ
 
-3D LiDARの点群からデブリ候補をクラスタリングし、その中心を基準とする円を追従しながら、LiDARの実際の光軸を対象へ向け、30度おきにRGB画像をPNG保存するROS 2 Jazzyパッケージです。
-
-現行ROS2 for KSPのactive-vessel APIに対応しています。デモpackageはRCSやWrenchを直接扱わず、目標姿勢・位置・速度を`ControlSetpoint`として出力します。共通package `ksp_vehicle_control`だけが、実`vessel_id`へleaseを取得してBody Wrenchを作ります。
+デブリに3D LiDARを向けたままRCSで周回するROS 2 Jazzyデモです。位置推定と移動制御を分離しており、既定は**真値による相対位置**で制御します。同じ制御へLiDAR推定を接続できます。
 
 ```text
-LiDAR認識・周回/探索誘導 → ControlSetpoint → lease付き6DoF制御 → Wrench配分 → KSP/RCS
+位置推定パート                          移動制御パート
+truth: 自機・デブリの同時刻の絶対位置 ─┐
+                                     ├─ RelativeTarget ─ 周回誘導 ─ ControlSetpoint
+lidar: 3D点群 → SciPyクラスタ → 追跡 ─┘                         ↓
+                                                   ksp_vehicle_control
+                                                     lease → Body Wrench → RCS
 ```
 
-> このデモはKSPの物理を使う実験用コントローラです。最初はクイックセーブを取り、RCSを十分搭載し、低い速度・大きい周回半径から調整してください。LiDARからは物体固有IDが得られないため、最大の点群クラスタを対象として追跡します。
+`debris_target_estimator`は位置推定だけを担当し、制御指令を出しません。`debris_orbit`は点群を購読せず、共通の相対位置・相対速度から目標位置・姿勢・速度を作ります。`debris_orbit_controller`は既存の`ksp_vehicle_control`を使う共通制御器です。
 
-## 機体の準備
+## 実機の準備と起動
 
-1. 操作機体に3D LiDAR、`Kerbal ROS2 RGB Camera`、全6軸を制御できるRCSを搭載します。
-2. VAB/SPHのPart Action WindowでLiDARのSensor IDを`front_lidar`、カメラを`orbit_camera`にします。別のIDを使う場合は起動引数で変更できます。
-3. LiDARとカメラの前方をデブリへ向けます。LiDARは機体に対して回転して搭載しても、TFの取付姿勢から光軸を自動補正します。姿勢目標は現在姿勢から光軸を合わせる最短回転で作り、視線まわりの不要なロールは指令しません。撮影も正対させたい場合はカメラの光軸をLiDARと揃えてください。
-4. 対象デブリ以外がLiDAR視野へ大きく入らない場所でFlightを開始します。
+1. 機体に全6軸を制御できるRCS、3D LiDAR、必要ならRGBカメラを搭載します。
+2. Sensor IDをLiDARは`front_lidar`、カメラは`orbit_camera`にします。LiDARの取付位置と姿勢はTFから取得します。カメラも正対させるなら光軸をLiDARと揃えます。
+3. 分離後の対象がLiDARの250 m範囲内にある状態で実行します。画像保存はカメラなしでも周回制御を妨げません。
 
-デブリのIDは指定しません。ノードは3D LiDAR点群を距離でクラスタリングし、初回は点数の多いクラスタを選び、その後は推定位置と速度に最も近いクラスタを同じデブリとして追跡します。
-
-`demo_instance_id`は状態Topicと画像ファイル名だけに使うデモ実行IDで、KSP機体を選択しません。制御対象は`/ksp_vessel/lifecycle`の`vessel_id`で固定されます。`lidar_sensor_id`と`camera_sensor_id`はKSP上の実パーツのSensor IDです。
-
-## ビルド
-
-リポジトリ直下で次を実行すると、bridge、interfaces、Nav2と一緒にこのデモも`~/ros2_ws`へ同期・ビルドされます。
+以下は`ROS2 debug`の`test A`を使う手順です。`dev_debug.sh`は元のセーブを保持し、隔離デバッグセーブを作ります。
 
 ```bash
+# リポジトリ直下
 ./dev_sync.sh
-source ~/ros2_ws/install/setup.bash
+./Development/commands/dev_debug.sh \
+  --save "ROS2 debug" --vessel "test A" --launch-craft \
+  --lidar-profile long --no-teleport --keep-session
 ```
 
-デモだけを手動で配置する場合:
-
-```bash
-mkdir -p ~/ros2_ws/src
-cp -r Demo/debris_orbit ~/ros2_ws/src/
-cd ~/ros2_ws
-source /opt/ros/jazzy/setup.bash
-rosdep install --from-paths src --ignore-src --rosdistro jazzy -y
-colcon build --packages-up-to ksp_vehicle_control debris_orbit
-source install/setup.bash
-```
-
-## 起動
-
-ターミナル1でbridgeを起動します。
+Flightが開いたら別ターミナルでbridgeを起動します。Mod変更後はKSPを再起動してください。
 
 ```bash
 source /opt/ros/jazzy/setup.bash
@@ -52,108 +37,124 @@ source ~/ros2_ws/install/setup.bash
 ros2 run ksp_lidar_bridge udp_bridge --host 127.0.0.1 --port 49010
 ```
 
-KSPで`test A`をアクティブ機体にしてFlightへ入り、lifecycleに実際の機体IDが出ることを確認します。
+さらに別ターミナルで低軌道へ移し、真値モードを起動します。
 
 ```bash
-ros2 topic list | grep -E 'front_lidar|orbit_camera|ground_truth|lifecycle|control'
-ros2 topic echo --once /ksp_vessel/lifecycle
+./Development/commands/dev_teleport.sh lko
+source /opt/ros/jazzy/setup.bash
+source ~/ros2_ws/install/setup.bash
+ros2 launch debris_orbit debris_orbit.launch.py \
+  target_source:=truth enabled:=true demo_instance_id:=test_a_run rviz:=true
 ```
 
-ターミナル2でデモを起動します。`enabled:=true`を明示するまで指令を出しません。
+対象がない間は`waiting_for_truth_target`で待ちます。別ターミナルから分離します。
+
+```bash
+./Development/commands/dev_separate.sh
+```
+
+真値モードは、同一時刻・同一原点の絶対位置／速度を引き算し、最も近いデブリを初回に選択してそのvessel IDへ固定します。対象が消えても別の物体へ勝手に乗り換えません。指定したい場合は`target_vessel_id:=<vessel_id>`を追加します。候補一覧は次で確認できます。
+
+```bash
+ros2 topic echo /ksp_vessel/ground_truth/nearby_vessels --once
+```
+
+`demo_instance_id`は状態・画像の名前空間です。操作するKSP機体はlifecycleのactive vesselで決まります。
+
+## LiDAR推定への切替
+
+真値モードのターミナルで`Ctrl-C`を押して止め、デブリをLiDAR正面に捉えている間に次を起動します。
+
+```bash
+ros2 launch debris_orbit debris_orbit.launch.py \
+  target_source:=lidar enabled:=true demo_instance_id:=test_a_lidar rviz:=true
+```
+
+推定だけを検証する場合は、制御器を起動しません。
+
+```bash
+ros2 launch debris_orbit debris_orbit.launch.py \
+  target_source:=lidar controller_enabled:=false rviz:=true
+```
+
+LiDARモードは`nearby_vessels`を購読しません。NumPyによる間引き、[SciPy cKDTree](https://docs.scipy.org/doc/scipy/reference/generated/scipy.spatial.cKDTree.html)による近傍検索、SciPyの疎行列連結成分によるクラスタリングを使います。前方35度以内の点から大きすぎる面を除き、初回は最大クラスタ、その後は予測位置に近いクラスタを選択します。観測表面の包囲箱中心を6状態のKalman filterで追跡し、相対位置と相対速度を配信します。
+
+推定に使う自機情報は姿勢・角速度とLiDAR取付TFです。**デブリの位置・速度の真値は推定に使いません。** 現在の姿勢基準と共通制御器の自機状態にはGround Truthを使用します。LiDARだけによる全6DoF自己位置推定・SLAMではありません。別デモ`position_estimator`は静止環境のscan-to-scan ICP用で、動くデブリの中心推定とは役割が異なります。
+
+見えている表面の中心と実際の重心には差があります。`target_center_offset`で視線奥への補正を設定できますが、対象形状・見える面・点群密度に依存するため、一定補正で重心が正確に求まるわけではありません。ほぼ対称な物体の姿勢や見えない形状も復元しません。
+
+## RViz表示
+
+`rviz:=true`で付属設定を読み込み、Fixed Frameを`debris_view_<demo_instance_id>`へ自動設定します。真値モードでも相対位置と軌跡を表示できます。
+
+- 水色の点: 選択したデブリのクラスタ。灰色の点: LiDARの観測点。
+- 水色の球: 推定対象中心。オレンジの球・線: 自機位置と相対軌跡。
+- 灰色の円: 目標周回半径。直線: 対象への視線。
+
+表示は推定した対象中心を原点とする独立した座標系です。点群・機体・軌跡を同じ座標系へ移しているため、低軌道の大きな絶対座標に流されず観察できます。`ground_truth_enu -> base_link`とはTFを競合させません。
+
+## 制御動作
+
+既定半径15 m、角速度1 deg/s。まずLiDARを対象へ向けて円周へ接近し、到達後は現在の実測方位から円周方向の速度を与えます。時間だけで先へ進む軌道ではないので、接近や指向の遅れで目標が先走りません。近接・周回ともLiDAR光軸を制御し、視線変化の角速度も先行指令します。
+
+- 指向誤差が8度を超える間は円周運動を保留し、相対速度を減速させます。
+- 接近位置ステップは2 mに制限し、遠方への大きな指令による行き過ぎを抑えます。
+- 相対位置のみを自機状態の時刻まで予測します。制御器もsetpointを自機poseの時刻へ整合し、公転速度×通信遅延による偽の位置誤差を防ぎます。
+- 過大な角速度では`detumbling`へ移ります。入力喪失、原点変更、機体変更は追跡と軌道をリセットします。取付TFがない間はIDLEです。
+- 対象を失ったLiDARモードは最後の視線を中心に往復探索します。観測が継続して3回届くまで周回を再開しません。
+- 0, 30, …, 330度の画像を12枚保存し、既定では撮影後も周回を続けます。`stop_after_capture: true`なら撮影が揃い、実測角が360度へ達した後に停止します。
+
+`Ctrl-C`で停止すると共通制御器がゼロWrenchを送りleaseを解放します。KSP側の角速度・指令timeout・連続噴射の制限も有効です。
+
+## 設定とインターフェース
+
+[`config/debris_orbit.yaml`](config/debris_orbit.yaml)の`debris_target_estimator`が位置推定、`debris_orbit`が誘導、`debris_orbit_controller`が共通制御の設定です。独自YAMLは`config_file:=/absolute/path/config.yaml`で指定します。
+
+| 設定 | 用途 |
+|---|---|
+| `target_source:=truth\|lidar` | 位置推定を切替 |
+| `target_vessel_id` | 真値モードの対象固定。空なら最寄りデブリ |
+| `orbit_radius:=15.0` | 誘導とRViz両方の半径を上書き |
+| `lidar_sensor_id`, `camera_sensor_id` | KSP上のSensor ID |
+| `lidar_frame` | 誘導用の取付TF名。bridgeのframe-prefix変更時に指定 |
+| `target_topic` | 推定・誘導の共通入力Topic |
+| `estimator_enabled:=false` | 外部のRelativeTarget publisherに接続 |
+| `controller_enabled:=false` | 認識・誘導だけを起動 |
+| `max_off_axis_deg`, `max_cluster_extent` | LiDAR候補の前方角度・最大対角長[m] |
+| `measurement_sigma`, `acceleration_sigma` | 相対追跡filterの観測・加速度雑音 |
+| `arrival_*_tolerance` | 周回開始の位置・相対速度・姿勢許容値 |
+
+共通Topicルートは`/ksp_vessel/demos/debris_orbit/<demo_instance_id>`です。
+
+| Topic末尾 | 型・意味 |
+|---|---|
+| `target` | `RelativeTarget`: デブリ−自機の位置[m]・速度[m/s]、world軸表現 |
+| `setpoint` | `ControlSetpoint`: 共通制御器への目標 |
+| `status`, `estimator_status`, `controller_status` | JSON状態 |
+| `points`, `target_points` | RViz用PointCloud2（LiDARモード） |
+| `markers`, `path` | RViz用MarkerArray、Path |
+
+`RelativeTarget.header.stamp`は観測時刻、`header.frame_id`は`ground_truth_enu`です。位置の原点は自機ですが、軸は回転する`base_link`ではなくworld軸です。`observer_vessel_id`と`origin_sequence`がlifecycleと一致する必要があります。両sourceを同じTopicへ同時に配信しないでください。
+
+真値入力`/ksp_vessel/ground_truth/nearby_vessels`は、同じ天体のロード済み・unpacked・2500 m以内の他機体を最大32件配信します。デモ側は既定で250 m以内に絞ります。
+
+## 実機記録とテスト
+
+実際のKSPで真値モード、続いてLiDARモードを操作・計測した結果は[実機試験記録](../../Development/evidence/debris_orbit/README.md)に保存しています。
+
+評価用ノードは制御・推定と独立し、真値との差、実測周回角、真のデブリへの光軸誤差を保存します。対象候補が複数なら`--target-id`も指定してください。
+
+```bash
+python3 Development/tools/record_debris_orbit.py \
+  --instance test_a_lidar --output /tmp/debris_trial --stop-after-turns 1
+python3 Development/tools/plot_debris_orbit.py /tmp/debris_trial
+```
 
 ```bash
 source /opt/ros/jazzy/setup.bash
 source ~/ros2_ws/install/setup.bash
-ros2 launch debris_orbit debris_orbit.launch.py \
-  enabled:=true \
-  demo_instance_id:=test_a_run \
-  lidar_sensor_id:=front_lidar \
-  camera_sensor_id:=orbit_camera
+PYTHONPATH="Demo/debris_orbit:Ros2/ksp_vehicle_control:Ros2/ksp_lidar_bridge:$PYTHONPATH" \
+  /usr/bin/python3 -m unittest discover -s Demo/debris_orbit/test -v
 ```
 
-KSPへ制御権も推力も送らず認識・誘導だけを確認する場合は、共通controllerを起動しません。
-
-```bash
-ros2 launch debris_orbit debris_orbit.launch.py \
-  enabled:=true \
-  demo_instance_id:=test_a_dry_run \
-  controller_enabled:=false
-```
-
-launchは`debris_orbit`（認識・誘導）と`debris_orbit_controller`（`ksp_vehicle_control`の共通目標追従）の2ノードを起動します。controllerは非IDLE setpointが有効な間だけleaseを取得し、完了・入力timeout・終了時にゼロ指令とreleaseを送ります。既定では半径15 mへ接近し、3 deg/sで1周して12枚を保存します。
-
-状態はJSONで確認できます。
-
-```bash
-ros2 topic echo /ksp_vessel/demos/debris_orbit/test_a_run/status
-```
-
-主な状態は`disabled`、`waiting_for_sensor_data`、`waiting_for_lidar_transform`、`detumbling`、`acquiring_target`、`searching`、`approaching_orbit`、`orbiting`、`complete`です。対象が見えている間は、周回開始前も含めLiDARが対象を向く姿勢目標を維持します。見失うと並進を止め、最後の視線を中心に小角度で往復探索します。目標を記憶していない場合は現在のLiDAR方向を中心に探索するため、一方向へ回転し続けません。LiDAR取付TFが未取得なら推測で探索せず、現在姿勢を保持します。
-
-姿勢保持中は`attitude_hold_rate_limit_deg_s`を超える回転を加速するトルクを遮断し、制動を優先します。さらに高速になると目標指向を止めてデタンブルへ移ります。誘導目標、TF、姿勢、速度のいずれかが途切れると共通controllerはゼロWrenchを送りleaseを解放します。KSP側にも独立した角速度・変化率・連続噴射・timeout上限があります。
-
-点群はLiDAR→`base_link`の接続済みTFが届くまでノード内キューで待機します。proxy固定jointとSensor ID由来のmount frameは`/tf_static`です。機体のワールド位置・姿勢はGround Truth pose/twistから点群のKSP timestampへ整合されます。起動直後でも点群callbackをブロックしません。
-
-`TF base_link <- ros2_ksp_<sensor_id>_lidar_frame`待ちで点群が破棄され続ける場合は、古いKSPプラグインまたはbridgeが動作しています。`./dev_sync.sh`後にKSPとbridgeを再起動してください。正常時は`base_link -> ksp_<vessel>_link_0000 -> ... -> ros2_ksp_<sensor_id>_lidar_frame`が接続されます。
-
-## 設定
-
-既定値は[`config/debris_orbit.yaml`](config/debris_orbit.yaml)にあります。コピーして変更し、次のように読み込めます。
-
-```bash
-ros2 launch debris_orbit debris_orbit.launch.py \
-  config_file:=/absolute/path/to/my_debris_orbit.yaml \
-  enabled:=true
-```
-
-よく調整する値:
-
-| パラメータ | 内容 | 既定値 |
-|---|---|---:|
-| `orbit_radius` | 対象中心からの周回半径[m] | `15.0` |
-| `vessel_topic_prefix` | ROS2 for KSPの機体系Topicルート | `/ksp_vessel` |
-| `angular_speed_deg_s` | 周回角速度[deg/s] | `3.0` |
-| `orbit_direction` | 周回方向。`1`または`-1` | `1` |
-| `orbit_plane_normal` | `ground_truth_enu`で表した周回面法線 | `[0,0,1]` |
-| `target_cluster_index` | 初回検出時に点数順で何番目のクラスタを使うか | `0` |
-| `cluster_tolerance` | 同一物体とみなす点間距離[m] | `1.5` |
-| `target_center_offset` | 観測表面から視線奥へ寄せる中心補正[m] | `0.0` |
-| `target_acquisition_samples` | 制御開始前に必要な連続対象観測数 | `3` |
-| `search_yaw_amplitude_deg` | 喪失時の左右探索振幅 | `8.0` |
-| `search_pitch_amplitude_deg` | 喪失時の上下探索振幅 | `4.0` |
-| `search_period_sec` | 探索が中心へ戻る周期[s] | `8.0` |
-| `search_memory_timeout_sec` | 最終対象位置を探索中心に使う時間[s] | `10.0` |
-| `detumble_enter_rate_deg_s` | この角速度を超えたらデタンブル開始[deg/s] | `6.0` |
-| `detumble_exit_rate_deg_s` | この角速度未満で対象探索へ移行[deg/s] | `2.0` |
-| `arrival_*_tolerance` | 0度撮影・周回開始の収束判定 | YAML参照 |
-| `transform_wait_timeout_sec` | 点群と同時刻の搭載TFを待つ上限[s] | `1.0` |
-| `cloud_queue_size` | TF待ち点群の最大保持数 | `20` |
-| `output_directory` | PNG出力先。相対指定は起動時の`$PWD`基準 | `debris_orbit_captures` |
-
-`debris_orbit_controller`側の主な調整値は`position_kp`、`velocity_kd`、`attitude_kp`、`angular_kd`、`max_force`、`max_torque`です。既定上限は並進20 N、周回姿勢2 N·m、探索・対象取得0.5 N·mです。`controller_id`、`control_priority`、`lease_duration_sec`、`suppress_sas`はauthority設定です。探索ロジックを変えても、共通制御やKSP側RCS配分へ触れる必要はありません。
-
-LiDARの最大クラスタが別物体になる場合は視野を整理するか、`target_cluster_index`を変更してください。点群は対象の見えている表面だけなので、形状中心との差が大きい場合は`target_center_offset`を正値にします。
-
-## 入出力
-
-| 方向 | Topic | 型 |
-|---|---|---|
-| Subscribe | `/ksp_vessel/lidar_3d/<lidar_sensor_id>/points` | `sensor_msgs/msg/PointCloud2` |
-| Subscribe | `/ksp_vessel/camera/<camera_sensor_id>/image_raw` | `sensor_msgs/msg/Image` |
-| Subscribe | `/ksp_vessel/ground_truth/pose` | `geometry_msgs/msg/PoseStamped` |
-| Subscribe | `/ksp_vessel/ground_truth/twist` | `geometry_msgs/msg/TwistStamped` |
-| Publish（誘導） | `/ksp_vessel/demos/debris_orbit/<demo_instance_id>/setpoint` | `ControlSetpoint` |
-| Subscribe（共通制御） | 同上 | `ControlSetpoint` |
-| Publish（共通制御） | `/ksp_vessel/control/authority/command` | `ControlAuthorityCommand` |
-| Publish（共通制御） | `/ksp_vessel/control/wrench_command` | `BodyWrenchCommand` |
-| Publish（共通制御） | `/ksp_vessel/demos/debris_orbit/<demo_instance_id>/controller_status` | `std_msgs/msg/String` (JSON) |
-| Publish | `/ksp_vessel/demos/debris_orbit/<demo_instance_id>/status` | `std_msgs/msg/String` (JSON) |
-
-各センサーIDはbridgeと同じ規則で小文字のROS名へ正規化します。任意の既存Topicへ直接接続したい場合は、YAMLの各Topicパラメータを設定してください。`setpoint_topic`は両ノードで同じ値にする必要があります。
-
-## 制約
-
-- デブリの選択にKSPの固有IDや名前は使用しません。複数物体が視野にある場合は、初回の`target_cluster_index`で点数順の対象を選択します。
-- Ground Truthは制御に使用します。LiDARのみの自己位置推定デモではありません。
-- 対象中心の速度は連続するLiDAR観測から推定し、KSP低軌道の大きな公転速度を打ち消して相対運動を制御します。点群を継続取得できない対象や急加速する対象には対応しません。
-- RCS配置や質量に応じてゲインと上限を調整してください。SAS所有権は個別トルクではなくlease全体で管理されます。
+ROS callbackテストは独立したROS_DOMAIN_ID 173で動き、試験中のKSPへ指令を送りません。

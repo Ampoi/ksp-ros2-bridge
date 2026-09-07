@@ -95,7 +95,7 @@ namespace KerbalLiDAR
     }
 
     [KSPAddon(KSPAddon.Startup.Flight, false)]
-    public sealed class KerbalRosVehicleManager : MonoBehaviour
+    public sealed partial class KerbalRosVehicleManager : MonoBehaviour
     {
         private const int ProtocolVersion = 1;
         private const int ControlProtocolVersion = 2;
@@ -103,6 +103,11 @@ namespace KerbalLiDAR
         private const int StatePort = 49010;
         private const float StateRateHz = 30f;
         private const float DefaultTimeout = 0.5f;
+        // KSP's flight dynamics use tonnes, kN and kN*m.  The ROS API is SI:
+        // kilograms, N and N*m.  Keep the conversion at this adapter boundary
+        // so the domain allocator and every wire message remain unambiguous.
+        private const float KspForceUnitInNewtons = 1000f;
+        private const float NewtonsToKspForceUnit = 1f / KspForceUnitInNewtons;
 
         private sealed class WheelOverride
         {
@@ -591,7 +596,8 @@ namespace KerbalLiDAR
                         Enabled = command.enabled,
                         TargetAngularVelocity = (float)command.targetAngularVelocity,
                         SteeringAngleDegrees = (float)(command.steeringAngle * Mathf.Rad2Deg),
-                        MaxDriveTorque = Mathf.Max(0f, (float)command.maxDriveTorque),
+                        MaxDriveTorque = Mathf.Max(
+                            0f, (float)command.maxDriveTorque * NewtonsToKspForceUnit),
                         ExpiresAt = expiresAt
                     };
                     break;
@@ -600,7 +606,8 @@ namespace KerbalLiDAR
                     engineOverrides[name] = new EngineOverride
                     {
                         Enabled = command.enabled,
-                        TargetThrust = Mathf.Max(0f, (float)command.targetThrust),
+                        TargetThrust = Mathf.Max(
+                            0f, (float)command.targetThrust * NewtonsToKspForceUnit),
                         ExpiresAt = expiresAt
                     };
                     break;
@@ -609,7 +616,8 @@ namespace KerbalLiDAR
                     rcsOverrides[name] = new RcsOverride
                     {
                         Enabled = command.enabled,
-                        ThrustLimit = Mathf.Max(0f, (float)command.thrustLimit),
+                        ThrustLimit = Mathf.Max(
+                            0f, (float)command.thrustLimit * NewtonsToKspForceUnit),
                         ExpiresAt = expiresAt
                     };
                     break;
@@ -853,7 +861,8 @@ namespace KerbalLiDAR
                     continue;
                 }
                 var radius = Mathf.Max(0.01f, wheelBase.Wheel.WheelRadius);
-                maximumForce += Mathf.Max(0f, motor.maxTorque) / radius;
+                maximumForce += Mathf.Max(0f, motor.maxTorque) *
+                    KspForceUnitInNewtons / radius;
                 steeringLever += Mathf.Abs(Vector3.Dot(
                     wheelBase.part.transform.position - vessel.CurrentCoM,
                     BodyForwardWorld()));
@@ -948,7 +957,8 @@ namespace KerbalLiDAR
                 {
                     continue;
                 }
-                var maximum = rcs.thrusterPower * Mathf.Clamp01(rcs.thrustPercentage / 100f);
+                var maximum = rcs.thrusterPower *
+                    Mathf.Clamp01(rcs.thrustPercentage / 100f) * KspForceUnitInNewtons;
                 if (maximum <= 0.001f)
                 {
                     continue;
@@ -1022,7 +1032,7 @@ namespace KerbalLiDAR
                     var forceWorld = -axis * (maximum * fraction);
                     var torqueWorld = Vector3.Cross(offsetWorld, forceWorld);
                     forceBody += ToDomain(WorldVectorToBody(forceWorld));
-                    torqueBody += ToDomain(WorldVectorToBody(torqueWorld));
+                    torqueBody += ToDomain(WorldAxialVectorToBody(torqueWorld));
                 }
             }
             return new WrenchValue(forceBody, torqueBody);
@@ -1103,15 +1113,15 @@ namespace KerbalLiDAR
                     center = engine.part.transform.position;
                 }
                 direction.Normalize();
-                var worldForce = direction * maxThrust;
+                var worldForce = direction * (maxThrust * KspForceUnitInNewtons);
                 var worldOffset = center - vessel.CurrentCoM;
                 var force = WorldVectorToBody(worldForce);
                 channels.Add(new EngineChannel
                 {
                     Engine = engine,
                     Force = force,
-                    Torque = WorldVectorToBody(Vector3.Cross(worldOffset, worldForce)),
-                    MaximumThrust = maxThrust
+                    Torque = WorldAxialVectorToBody(Vector3.Cross(worldOffset, worldForce)),
+                    MaximumThrust = maxThrust * KspForceUnitInNewtons
                 });
             }
             return channels;
@@ -1251,12 +1261,11 @@ namespace KerbalLiDAR
             var position = ProjectToAnchor(delta);
 
             var linearVelocity = WorldVectorToAnchor(vessel.srf_velocity, currentEast, currentNorth, currentUp);
-            var angularVelocity = WorldVectorToAnchor(
+            var angularVelocity = -WorldVectorToAnchor(
                 VesselAngularVelocityWorld(), currentEast, currentNorth, currentUp);
-            // Publish these directly from KSP's vessel basis.  Reconstructing
-            // body velocity from the ROS orientation is unsafe because Unity's
-            // transform basis and ROS's right-handed frame do not share the
-            // same handedness.
+            // Publish directly from KSP's vessel basis. Angular velocity and
+            // torque use axial-vector conversions, including the handedness
+            // sign, so they agree with right-handed ROS quaternion derivatives.
             var linearVelocityBody = WorldVectorToBody(vessel.srf_velocity);
             var angularVelocityBody = VesselAngularVelocityBody();
             var now = Planetarium.GetUniversalTime();
@@ -1294,6 +1303,52 @@ namespace KerbalLiDAR
             AppendVector(builder, "linearAcceleration", linearAcceleration);
             AppendVector(builder, "angularAcceleration", angularAcceleration);
             builder.Append('}');
+            Send(builder.ToString());
+            SendNearbyVessels(now, position, linearVelocity, currentEast, currentNorth, currentUp);
+        }
+
+        private void SendNearbyVessels(double now, Vector3 position, Vector3 velocity,
+            Vector3d east, Vector3d north, Vector3d up)
+        {
+            // The observer and every target share one origin and physics sample.
+            // Convert CoM differences before adding the absolute origin so Unity
+            // floating-origin shifts and large orbital coordinates cancel out.
+            var builder = new StringBuilder(2048);
+            builder.Append('{');
+            AppendString(builder, "type", "ksp_nearby_vessels", true);
+            AppendNumber(builder, "version", ProtocolVersion);
+            AppendString(builder, "vesselId", vessel.id.ToString("N"));
+            AppendNumber(builder, "originSequence", originSequence);
+            AppendNumber(builder, "universalTime", now);
+            AppendVector(builder, "position", position);
+            AppendVector(builder, "linearVelocity", velocity);
+            Prefix(builder, "vessels", false);
+            builder.Append('[');
+            var count = 0;
+            foreach (var other in FlightGlobals.VesselsLoaded)
+            {
+                if (other == null || other == vessel || other.packed || other.mainBody != anchorBody)
+                    continue;
+                var offset = other.CurrentCoM - vessel.CurrentCoM;
+                if (offset.sqrMagnitude > 2500.0 * 2500.0) continue;
+                // Bound the UDP datagram to well below its 65507-byte limit.
+                if (count >= 32) break;
+                if (count++ > 0) builder.Append(',');
+                var relativePosition = WorldVectorToAnchor(offset, east, north, up);
+                var relativeVelocity = WorldVectorToAnchor(other.srf_velocity - vessel.srf_velocity, east, north, up);
+                builder.Append('{');
+                AppendString(builder, "vesselId", other.id.ToString("N"), true);
+                AppendString(builder, "vessel", other.vesselName);
+                AppendBoolean(builder, "isDebris", other.vesselType == VesselType.Debris);
+                // Add in double precision: casting the large absolute result to
+                // Vector3 would quantize away metre/submetre relative motion.
+                AppendDoubleVector(builder, "position", new Vector3d(position.x, position.y, position.z) +
+                    new Vector3d(relativePosition.x, relativePosition.y, relativePosition.z));
+                AppendDoubleVector(builder, "linearVelocity", new Vector3d(velocity.x, velocity.y, velocity.z) +
+                    new Vector3d(relativeVelocity.x, relativeVelocity.y, relativeVelocity.z));
+                builder.Append('}');
+            }
+            builder.Append(']').Append('}');
             Send(builder.ToString());
         }
 
@@ -1371,10 +1426,11 @@ namespace KerbalLiDAR
             AppendNumber(builder, "angularPosition", controller.wheelCollider == null ? 0f : controller.wheelCollider.angularPosition);
             AppendNumber(builder, "angularVelocity", state.angularVelocity);
             AppendNumber(builder, "steeringAngle", state.steerAngle * Mathf.Deg2Rad);
-            AppendNumber(builder, "driveTorque", state.driveTorque);
-            AppendNumber(builder, "brakeTorque", state.brakeTorque);
+            AppendNumber(builder, "driveTorque", state.driveTorque * KspForceUnitInNewtons);
+            AppendNumber(builder, "brakeTorque", state.brakeTorque * KspForceUnitInNewtons);
             AppendNumber(builder, "slip", state.combinedTireSlip);
-            AppendNumber(builder, "maxDriveTorque", controller.maxDriveTorque);
+            AppendNumber(builder, "maxDriveTorque",
+                controller.maxDriveTorque * KspForceUnitInNewtons);
             AppendBoolean(builder, "commandActive", wheelOverrides.ContainsKey(name));
             builder.Append('}');
             Send(builder.ToString());
@@ -1389,8 +1445,10 @@ namespace KerbalLiDAR
             AppendBoolean(builder, "operational", engine.isOperational);
             AppendBoolean(builder, "flameout", engine.flameout);
             AppendNumber(builder, "throttle", engine.currentThrottle);
-            AppendNumber(builder, "thrust", engine.GetCurrentThrust());
-            AppendNumber(builder, "maxThrust", engine.GetMaxThrust());
+            AppendNumber(builder, "thrust",
+                engine.GetCurrentThrust() * KspForceUnitInNewtons);
+            AppendNumber(builder, "maxThrust",
+                engine.GetMaxThrust() * KspForceUnitInNewtons);
             AppendBoolean(builder, "commandActive", engineOverrides.ContainsKey(name));
             builder.Append('}');
             Send(builder.ToString());
@@ -1410,9 +1468,11 @@ namespace KerbalLiDAR
             AppendBoolean(builder, "enabled", rcs.rcsEnabled);
             AppendBoolean(builder, "active", rcs.rcs_active);
             AppendBoolean(builder, "flameout", rcs.flameout);
-            AppendNumber(builder, "thrust", thrust);
-            AppendNumber(builder, "maxThrust", rcs.thrusterPower * nozzleCount);
-            AppendNumber(builder, "thrustLimit", rcs.thrusterPower * Mathf.Clamp01(rcs.thrustPercentage / 100f));
+            AppendNumber(builder, "thrust", thrust * KspForceUnitInNewtons);
+            AppendNumber(builder, "maxThrust",
+                rcs.thrusterPower * nozzleCount * KspForceUnitInNewtons);
+            AppendNumber(builder, "thrustLimit", rcs.thrusterPower *
+                Mathf.Clamp01(rcs.thrustPercentage / 100f) * KspForceUnitInNewtons);
             AppendBoolean(builder, "commandActive", rcsOverrides.ContainsKey(name));
             builder.Append('}');
             Send(builder.ToString());
@@ -1557,7 +1617,8 @@ namespace KerbalLiDAR
             var torque = Vector3Value.Zero;
             foreach (var engine in EngineModules())
             {
-                var thrust = Mathf.Max(0f, engine.GetCurrentThrust());
+                var thrust = Mathf.Max(0f, engine.GetCurrentThrust()) *
+                    KspForceUnitInNewtons;
                 var transforms = engine.thrustTransforms;
                 if (thrust <= 0f || transforms == null || transforms.Count == 0)
                 {
@@ -1570,7 +1631,7 @@ namespace KerbalLiDAR
                     if (nozzle == null) continue;
                     var worldForce = -nozzle.forward.normalized * perNozzle;
                     force += ToDomain(WorldVectorToBody(worldForce));
-                    torque += ToDomain(WorldVectorToBody(
+                    torque += ToDomain(WorldAxialVectorToBody(
                         Vector3.Cross(nozzle.position - vessel.CurrentCoM, worldForce)));
                 }
             }
@@ -1586,12 +1647,13 @@ namespace KerbalLiDAR
                     var nozzle = rcs.thrusterTransforms[index];
                     // KSP stores signed per-nozzle thrust; magnitude is the
                     // achieved force while the transform provides direction.
-                    var thrust = Mathf.Abs(rcs.thrustForces[index]);
+                    var thrust = Mathf.Abs(rcs.thrustForces[index]) *
+                        KspForceUnitInNewtons;
                     if (nozzle == null || thrust <= 0f) continue;
                     var axis = (rcs.useZaxis ? nozzle.forward : nozzle.up).normalized;
                     var worldForce = -axis * thrust;
                     force += ToDomain(WorldVectorToBody(worldForce));
-                    torque += ToDomain(WorldVectorToBody(
+                    torque += ToDomain(WorldAxialVectorToBody(
                         Vector3.Cross(nozzle.position - vessel.CurrentCoM, worldForce)));
                 }
             }
@@ -1890,11 +1952,18 @@ namespace KerbalLiDAR
             {
                 return Vector3.zero;
             }
-            // VesselPrecalculate stores angularVelocity in ReferenceTransform
-            // local axes (right, forward, down). ROS base_link is
-            // (forward, left, up).
+            // Angular velocity is an axial vector. Unity -> ROS changes
+            // handedness, so it needs the determinant (-1) in addition to
+            // the (forward, left, up) permutation used for linear vectors.
             var local = vessel.angularVelocity;
-            return new Vector3(local.y, -local.x, -local.z);
+            return new Vector3(-local.y, local.x, local.z);
+        }
+
+        private Vector3 WorldAxialVectorToBody(Vector3 world)
+        {
+            // For reflection M: (M r) x (M F) = det(M) M (r x F).
+            // Keep torques consistent with ROS quaternion derivatives.
+            return -WorldVectorToBody(world);
         }
 
         private static Vector3d GeodeticPosition(double latitudeDegrees, double longitudeDegrees, double altitude, double radius)
@@ -2041,6 +2110,14 @@ namespace KerbalLiDAR
         }
 
         private static void AppendVector(StringBuilder builder, string name, Vector3 value)
+        {
+            Prefix(builder, name, false);
+            builder.Append('[').Append(value.x.ToString("R", CultureInfo.InvariantCulture)).Append(',')
+                .Append(value.y.ToString("R", CultureInfo.InvariantCulture)).Append(',')
+                .Append(value.z.ToString("R", CultureInfo.InvariantCulture)).Append(']');
+        }
+
+        private static void AppendDoubleVector(StringBuilder builder, string name, Vector3d value)
         {
             Prefix(builder, name, false);
             builder.Append('[').Append(value.x.ToString("R", CultureInfo.InvariantCulture)).Append(',')

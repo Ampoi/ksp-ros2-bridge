@@ -12,12 +12,14 @@ import re
 
 def _topic_component(value: str) -> str:
     value = re.sub(r"[^A-Za-z0-9_]+", "_", value).strip("_").lower()
-    return value or "demo_vehicle"
+    value = value or "demo_vehicle"
+    return "_" + value if value[0].isdigit() else value
 
 
 def _launch_demo(context):
     guidance_overrides = {}
     controller_overrides = {}
+    estimator_overrides = {}
     enabled = LaunchConfiguration("enabled").perform(context).strip().lower()
     if enabled:
         if enabled not in ("true", "false"):
@@ -29,7 +31,7 @@ def _launch_demo(context):
             guidance_overrides[name] = value
             if name == "vessel_topic_prefix":
                 controller_overrides[name] = value
-    for name in ("lidar_sensor_id", "camera_sensor_id"):
+    for name in ("lidar_sensor_id", "camera_sensor_id", "target_source", "lidar_frame"):
         value = LaunchConfiguration(name).perform(context).strip()
         if value:
             guidance_overrides[name] = value
@@ -50,6 +52,17 @@ def _launch_demo(context):
     wrench_command_topic = LaunchConfiguration("wrench_command_topic").perform(context).strip()
     if wrench_command_topic:
         controller_overrides["wrench_command_topic"] = wrench_command_topic
+    for name in ("demo_instance_id", "vessel_topic_prefix", "lidar_sensor_id", "target_source"):
+        if name in guidance_overrides:
+            estimator_overrides[name] = guidance_overrides[name]
+    estimator_overrides["target_vessel_id"] = LaunchConfiguration("target_vessel_id").perform(context).strip()
+    target_topic = LaunchConfiguration("target_topic").perform(context).strip() or f"{prefix}/demos/debris_orbit/{instance}/target"
+    guidance_overrides["target_topic"] = target_topic
+    estimator_overrides["target_topic"] = target_topic
+    radius = LaunchConfiguration("orbit_radius").perform(context).strip()
+    if radius:
+        guidance_overrides["orbit_radius"] = float(radius)
+        estimator_overrides["orbit_radius"] = float(radius)
     guidance_parameters = [LaunchConfiguration("config_file")]
     controller_parameters = [LaunchConfiguration("config_file")]
     if guidance_overrides:
@@ -57,6 +70,15 @@ def _launch_demo(context):
     if controller_overrides:
         controller_parameters.append(controller_overrides)
     return [
+        Node(package="rviz2", executable="rviz2", name="debris_orbit_rviz", output="screen",
+             arguments=["-d", os.path.join(get_package_share_directory("debris_orbit"), "rviz", "debris_orbit.rviz"),
+                        "-f", "debris_view_" + instance],
+             remappings=[(f"/debris_orbit_view/{name}", f"{prefix}/demos/debris_orbit/{instance}/{name}")
+                         for name in ("markers", "path", "points", "target_points")],
+             condition=IfCondition(LaunchConfiguration("rviz"))),
+        Node(package="debris_orbit", executable="target_estimator", name="debris_target_estimator",
+             output="screen", parameters=[LaunchConfiguration("config_file"), estimator_overrides],
+             condition=IfCondition(LaunchConfiguration("estimator_enabled"))),
         Node(
             package="debris_orbit",
             executable="debris_orbit_node",
@@ -81,6 +103,13 @@ def generate_launch_description() -> LaunchDescription:
     )
     arguments = [
         DeclareLaunchArgument("config_file", default_value=default_config),
+        DeclareLaunchArgument("rviz", default_value="false"),
+        DeclareLaunchArgument("estimator_enabled", default_value="true"),
+        DeclareLaunchArgument("orbit_radius", default_value=""),
+        DeclareLaunchArgument("target_source", default_value="truth", choices=["truth", "lidar"]),
+        DeclareLaunchArgument("target_vessel_id", default_value=""),
+        DeclareLaunchArgument("target_topic", default_value=""),
+        DeclareLaunchArgument("lidar_frame", default_value=""),
         DeclareLaunchArgument("enabled", default_value=""),
         DeclareLaunchArgument("demo_instance_id", default_value="demo_vehicle"),
         DeclareLaunchArgument("controller_id", default_value="debris_orbit_demo"),

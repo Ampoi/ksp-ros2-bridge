@@ -9,6 +9,7 @@ from ksp_ros2_interfaces.msg import (
     ControlAuthorityCommand,
     ControlAuthorityState,
     VesselLifecycle,
+    WrenchFeedback,
 )
 from ksp_vehicle_control.application.lease import LeaseAction, LeaseCoordinator
 from nav_msgs.msg import Odometry
@@ -44,6 +45,9 @@ class PlanarWrenchController(Node):
         self.declare_parameter(
             "authority_state_topic", "/ksp_vessel/control/authority/state"
         )
+        self.declare_parameter(
+            "wrench_feedback_topic", "/ksp_vessel/control/wrench_feedback"
+        )
         self.declare_parameter("vessel_lifecycle_topic", "/ksp_vessel/lifecycle")
         self.declare_parameter("controller_id", "nav2_planar_controller")
         self.declare_parameter("control_priority", 80)
@@ -62,6 +66,7 @@ class PlanarWrenchController(Node):
         self.declare_parameter("command_timeout", 0.5)
         self.declare_parameter("odom_timeout", 0.25)
         self.declare_parameter("brake_duration", 0.5)
+        self.declare_parameter("control_safety_cooldown_sec", 0.75)
 
         self.odom_base_frame = str(self.get_parameter("odom_base_frame").value)
         self.wrench_frame = str(self.get_parameter("wrench_frame").value)
@@ -82,6 +87,9 @@ class PlanarWrenchController(Node):
         self.release_timeout = Duration(
             nanoseconds=self.command_timeout.nanoseconds + self.brake_duration.nanoseconds
         )
+        self.safety_cooldown = Duration(
+            seconds=float(self.get_parameter("control_safety_cooldown_sec").value)
+        )
         self.control_priority = int(self.get_parameter("control_priority").value)
         self.lease_duration_sec = float(
             self.get_parameter("lease_duration_sec").value
@@ -101,6 +109,7 @@ class PlanarWrenchController(Node):
         self.measured = (0.0, 0.0, 0.0)
         self.last_command: Optional[Time] = None
         self.last_odometry: Optional[Time] = None
+        self.safety_cooldown_until: Optional[Time] = None
 
         command_qos = QoSProfile(depth=10)
         command_qos.reliability = ReliabilityPolicy.RELIABLE
@@ -141,6 +150,12 @@ class PlanarWrenchController(Node):
             self.receive_lifecycle,
             state_qos,
         )
+        self.create_subscription(
+            WrenchFeedback,
+            str(self.get_parameter("wrench_feedback_topic").value),
+            self.receive_wrench_feedback,
+            command_qos,
+        )
         self.timer = self.create_timer(1.0 / rate, self.control)
 
     def receive_lifecycle(self, message: VesselLifecycle) -> None:
@@ -168,6 +183,15 @@ class PlanarWrenchController(Node):
             return
         self.target = target
         self.last_command = self.get_clock().now()
+
+    def receive_wrench_feedback(self, message: WrenchFeedback) -> None:
+        """Pause briefly when KSP's continuous-actuation guard trips."""
+        if (
+            message.controller_id == self.lease.controller_id
+            and "continuous_actuation_limit" in message.reason.split(",")
+            and self.safety_cooldown_until is None
+        ):
+            self.safety_cooldown_until = self.get_clock().now() + self.safety_cooldown
 
     def receive_odometry(self, message: Odometry) -> None:
         """Store the latest finite body-frame LiDAR velocity estimate."""
@@ -206,6 +230,12 @@ class PlanarWrenchController(Node):
         self._maintain_authority(now)
         if not self.lease.owned:
             return
+
+        if self.safety_cooldown_until is not None:
+            if now < self.safety_cooldown_until:
+                self._publish_wrench(now, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+                return
+            self.safety_cooldown_until = None
 
         target = self.target if command_age <= self.command_timeout else (0.0, 0.0, 0.0)
         force, torque = planar_wrench(

@@ -1,36 +1,34 @@
-"""LiDAR-guided six-degree-of-freedom debris orbit demo node."""
+"""Source-independent relative-target orbit guidance and image capture."""
 
 from __future__ import annotations
 
 import json
 import math
 import os
-import struct
-from collections import deque
 from pathlib import Path
-from typing import Deque, Dict, Iterable, List, Optional, Tuple
+from typing import Optional, Tuple
 
-from geometry_msgs.msg import PoseStamped, TransformStamped, TwistStamped
-from ksp_ros2_interfaces.msg import ControlSetpoint
+from geometry_msgs.msg import PoseStamped, TwistStamped
+from ksp_ros2_interfaces.msg import ControlSetpoint, RelativeTarget, VesselLifecycle
 import rclpy
 from rclpy.duration import Duration
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 from rclpy.time import Time
-from sensor_msgs.msg import Image, PointCloud2, PointField
+from sensor_msgs.msg import Image
 from std_msgs.msg import String
 from tf2_ros import Buffer, TransformException, TransformListener
 
 from .core import (
     Vector3,
     add,
-    bounding_box_center,
+    clamp_norm,
     body_orientation_for_sensor_direction,
     detumble_required,
     dot,
-    euclidean_clusters,
-    integrate_world_orientation,
+    cross,
+    sanitize_ros_component,
     make_orbit_basis,
     norm,
     normalize,
@@ -41,57 +39,16 @@ from .core import (
     search_direction,
     scale,
     subtract,
-    transform_point,
     unwrap_angle,
     vessel_topics,
-    voxel_downsample,
 )
 
 
-_POINT_FIELD_FORMATS: Dict[int, Tuple[str, int]] = {
-    PointField.INT8: ("b", 1),
-    PointField.UINT8: ("B", 1),
-    PointField.INT16: ("h", 2),
-    PointField.UINT16: ("H", 2),
-    PointField.INT32: ("i", 4),
-    PointField.UINT32: ("I", 4),
-    PointField.FLOAT32: ("f", 4),
-    PointField.FLOAT64: ("d", 8),
-}
-
-
-def point_cloud_xyz(message: PointCloud2) -> Iterable[Vector3]:
-    fields = {field.name: field for field in message.fields}
-    if not all(name in fields for name in ("x", "y", "z")):
-        return
-    endian = ">" if message.is_bigendian else "<"
-    unpackers = []
-    for name in ("x", "y", "z"):
-        field = fields[name]
-        if field.datatype not in _POINT_FIELD_FORMATS:
-            return
-        code, _ = _POINT_FIELD_FORMATS[field.datatype]
-        unpackers.append((field.offset, struct.Struct(endian + code)))
-    data = bytes(message.data)
-    for row in range(message.height):
-        row_offset = row * message.row_step
-        for column in range(message.width):
-            point_offset = row_offset + column * message.point_step
-            try:
-                point = tuple(
-                    unpacker.unpack_from(data, point_offset + offset)[0]
-                    for offset, unpacker in unpackers
-                )
-            except struct.error:
-                return
-            yield point  # type: ignore[misc]
-
-
 class DebrisOrbitNode(Node):
-    """Detect one LiDAR cluster, orbit it, point at it, and save indexed images."""
+    """Orbit a relative target from either truth or LiDAR, through one interface."""
 
-    def __init__(self) -> None:
-        super().__init__("debris_orbit")
+    def __init__(self, **kwargs) -> None:
+        super().__init__("debris_orbit", **kwargs)
         self._declare_parameters()
 
         self.demo_instance_id = self._string("demo_instance_id")
@@ -101,7 +58,11 @@ class DebrisOrbitNode(Node):
         default_topics = vessel_topics(
             prefix, lidar_id, camera_id, self.demo_instance_id
         )
-        lidar_topic = self._string("lidar_topic") or default_topics.lidar_points
+        target_topic = self._string("target_topic") or default_topics.demo_status.rsplit("/", 1)[0] + "/target"
+        self.lidar_frame = self._string("lidar_frame") or (
+            "ros2_ksp_" + sanitize_ros_component(lidar_id, "lidar_3d") + "_lidar_frame"
+        )
+        self.target_source = self._string("target_source")
         camera_topic = self._string("camera_topic") or default_topics.camera_image
         pose_topic = self._string("pose_topic") or default_topics.ground_truth_pose
         twist_topic = self._string("twist_topic") or default_topics.ground_truth_twist
@@ -112,6 +73,7 @@ class DebrisOrbitNode(Node):
         self.body_frame = self._string("body_frame")
         self.enabled = bool(self.get_parameter("enabled").value)
         self.orbit_radius = self._positive("orbit_radius")
+        self.max_position_step = self._positive("max_position_step")
         self.angular_speed = math.radians(self._positive("angular_speed_deg_s"))
         self.orbit_direction = 1 if int(self.get_parameter("orbit_direction").value) >= 0 else -1
         plane_normal = tuple(self.get_parameter("orbit_plane_normal").value)
@@ -141,34 +103,12 @@ class DebrisOrbitNode(Node):
         self.arrival_attitude_tolerance = math.radians(
             self._positive("arrival_attitude_tolerance_deg")
         )
-        self.cluster_tolerance = self._positive("cluster_tolerance")
-        self.cluster_min_points = int(self.get_parameter("cluster_min_points").value)
-        self.voxel_size = self._positive("voxel_size")
-        self.max_points = int(self.get_parameter("max_points").value)
-        self.min_target_range = self._positive("min_target_range")
-        self.max_target_range = self._positive("max_target_range")
-        self.target_cluster_index = max(0, int(self.get_parameter("target_cluster_index").value))
-        self.target_max_jump = self._positive("target_max_jump")
-        target_filter_alpha = float(self.get_parameter("target_filter_alpha").value)
-        self.target_filter_alpha = min(1.0, max(0.01, target_filter_alpha))
-        velocity_filter_alpha = float(
-            self.get_parameter("target_velocity_filter_alpha").value
-        )
-        self.target_velocity_filter_alpha = min(
-            1.0, max(0.01, velocity_filter_alpha)
-        )
-        self.target_center_offset = float(self.get_parameter("target_center_offset").value)
         self.target_acquisition_samples = max(
             1, int(self.get_parameter("target_acquisition_samples").value)
         )
         self.state_timeout = Duration(seconds=self._positive("state_timeout_sec"))
         self.target_timeout = Duration(seconds=self._positive("target_timeout_sec"))
-        self.transform_wait_timeout = Duration(
-            seconds=self._positive("transform_wait_timeout_sec")
-        )
-        self.cloud_queue_size = max(
-            1, int(self.get_parameter("cloud_queue_size").value)
-        )
+        self.pointing_tolerance = math.radians(self._positive("translation_pointing_tolerance_deg"))
         self.capture_step = math.radians(self._positive("capture_step_deg"))
         self.capture_count = max(1, int(self.get_parameter("capture_count").value))
         self.capture_tolerance = math.radians(self._positive("capture_tolerance_deg"))
@@ -195,10 +135,12 @@ class DebrisOrbitNode(Node):
         self.last_target_received: Optional[Time] = None
         self.lidar_mount_rotation = (0.0, 0.0, 0.0, 1.0)
         self.lidar_mount_known = False
+        self.lidar_mount_translation = (0.0, 0.0, 0.0)
+        self.lifecycle_key = None
+        self.target_id = ""
         self.search_started: Optional[Time] = None
         self.search_reference_direction: Optional[Vector3] = None
         self.detumbling = False
-        self.cloud_queue: Deque[Tuple[PointCloud2, Time]] = deque()
         self.orbit_started: Optional[Time] = None
         self.basis_u: Optional[Vector3] = None
         self.basis_v: Optional[Vector3] = None
@@ -208,15 +150,15 @@ class DebrisOrbitNode(Node):
         self.saved_captures = 0
         self.complete = False
         self.last_status = ""
+        self.next_progress_status: Optional[Time] = None
 
         self.setpoint_publisher = self.create_publisher(ControlSetpoint, setpoint_topic, 10)
         status_qos = QoSProfile(depth=1)
         status_qos.reliability = ReliabilityPolicy.RELIABLE
         status_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
         self.status_publisher = self.create_publisher(String, status_topic, status_qos)
-        self.create_subscription(
-            PointCloud2, lidar_topic, self.receive_cloud, qos_profile_sensor_data
-        )
+        self.create_subscription(RelativeTarget, target_topic, self.receive_target, 10)
+        self.create_subscription(VesselLifecycle, f"{prefix}/lifecycle", self.receive_lifecycle, status_qos)
         self.create_subscription(Image, camera_topic, self.receive_image, qos_profile_sensor_data)
         self.create_subscription(
             PoseStamped, pose_topic, self.receive_pose, qos_profile_sensor_data
@@ -226,10 +168,8 @@ class DebrisOrbitNode(Node):
         )
         rate = self._positive("control_rate_hz")
         self.create_timer(1.0 / rate, self.control)
-        transform_retry_rate = self._positive("transform_retry_rate_hz")
-        self.create_timer(1.0 / transform_retry_rate, self.process_cloud_queue)
         self.get_logger().info(
-            f"demo_instance={self.demo_instance_id} lidar={lidar_topic} "
+            f"demo_instance={self.demo_instance_id} target={target_topic} source={self.target_source} "
             f"camera={camera_topic} setpoint={setpoint_topic} "
             f"status={status_topic} enabled={self.enabled}"
         )
@@ -242,7 +182,10 @@ class DebrisOrbitNode(Node):
             "lidar_sensor_id": "front_lidar",
             "camera_sensor_id": "orbit_camera",
             "vessel_topic_prefix": "/ksp_vessel",
-            "lidar_topic": "",
+            "target_topic": "",
+            "target_source": "truth",
+            "lidar_frame": "",
+            "translation_pointing_tolerance_deg": 8.0,
             "camera_topic": "",
             "pose_topic": "",
             "twist_topic": "",
@@ -251,41 +194,28 @@ class DebrisOrbitNode(Node):
             "world_frame": "ground_truth_enu",
             "body_frame": "base_link",
             "orbit_radius": 15.0,
-            "angular_speed_deg_s": 3.0,
+            "max_position_step": 2.0,
+            "angular_speed_deg_s": 1.0,
             "orbit_direction": 1,
             "orbit_plane_normal": [0.0, 0.0, 1.0],
             "detumble_enter_rate_deg_s": 6.0,
             "detumble_exit_rate_deg_s": 2.0,
             "search_start_delay_sec": 0.3,
-            "search_yaw_amplitude_deg": 8.0,
-            "search_pitch_amplitude_deg": 4.0,
-            "search_period_sec": 8.0,
-            "search_memory_timeout_sec": 10.0,
-            "arrival_position_tolerance": 0.75,
+            "search_yaw_amplitude_deg": 45.0,
+            "search_pitch_amplitude_deg": 20.0,
+            "search_period_sec": 120.0,
+            "search_memory_timeout_sec": 30.0,
+            "arrival_position_tolerance": 1.5,
             "arrival_speed_tolerance": 0.25,
             "arrival_attitude_tolerance_deg": 5.0,
-            "cluster_tolerance": 1.5,
-            "cluster_min_points": 8,
-            "voxel_size": 0.35,
-            "max_points": 4000,
-            "min_target_range": 1.0,
-            "max_target_range": 150.0,
-            "target_cluster_index": 0,
-            "target_max_jump": 8.0,
-            "target_filter_alpha": 0.25,
-            "target_velocity_filter_alpha": 0.35,
-            "target_center_offset": 0.0,
             "target_acquisition_samples": 3,
-            "state_timeout_sec": 0.5,
-            "target_timeout_sec": 1.0,
-            "transform_wait_timeout_sec": 1.0,
-            "transform_retry_rate_hz": 50.0,
-            "cloud_queue_size": 20,
+            "state_timeout_sec": 1.0,
+            "target_timeout_sec": 3.0,
             "control_rate_hz": 20.0,
             "capture_step_deg": 30.0,
             "capture_count": 12,
             "capture_tolerance_deg": 2.0,
-            "stop_after_capture": True,
+            "stop_after_capture": False,
             "output_directory": "debris_orbit_captures",
         }
         for name, default in parameters.items():
@@ -326,143 +256,64 @@ class DebrisOrbitNode(Node):
         self.twist = message
         self.twist_received = self.get_clock().now()
 
-    def receive_cloud(self, message: PointCloud2) -> None:
-        if len(self.cloud_queue) >= self.cloud_queue_size:
-            self.cloud_queue.popleft()
-            self.get_logger().warning(
-                "LiDAR cloud queue is full; dropped the oldest cloud",
-                throttle_duration_sec=5.0,
-            )
-        self.cloud_queue.append((message, self.get_clock().now()))
+    def receive_lifecycle(self, message: VesselLifecycle) -> None:
+        key = (message.vessel_id, message.origin_sequence)
+        active = message.state in (VesselLifecycle.STATE_ACTIVE, VesselLifecycle.STATE_CHANGED)
+        if not active or key != self.lifecycle_key:
+            self._reset_target_tracking()
+            self.last_target = None
+            self.pose = self.twist = None
+            self.lidar_mount_known = False
+            self.search_reference_direction = None
+            self.complete = False
+            self.saved_captures = 0
+        self.lifecycle_key = key if active else None
 
-    def process_cloud_queue(self) -> None:
-        """Wait asynchronously for cloud-time transforms without blocking TF callbacks."""
-        if not self.cloud_queue:
+    def receive_target(self, message: RelativeTarget) -> None:
+        if (message.header.frame_id != self.world_frame
+                or message.source != self.target_source
+                or self.lifecycle_key != (message.observer_vessel_id, message.origin_sequence)):
             return
-        message, queued_at = self.cloud_queue[0]
-        now = self.get_clock().now()
         stamp = Time.from_msg(message.header.stamp)
-        pose_ready = self._state_reaches_stamp(stamp)
-        # The LiDAR-to-body chain is a /tf_static extrinsic/model transform.
-        # Use the latest value so a model refresh cannot make an otherwise
-        # valid point cloud wait for a timestamped dynamic edge. World motion
-        # is evaluated at `stamp` from Ground Truth below.
-        transform_time = Time()
-        transform_ready = bool(message.header.frame_id) and self.tf_buffer.can_transform(
-            self.body_frame,
-            message.header.frame_id,
-            transform_time,
-            timeout=Duration(seconds=0.0),
-        )
-        if not pose_ready or not transform_ready:
-            if now - queued_at > self.transform_wait_timeout:
-                self.cloud_queue.popleft()
-                missing = []
-                if not pose_ready:
-                    missing.append("Ground Truth state")
-                if not transform_ready:
-                    missing.append(
-                        f"TF {self.body_frame} <- {message.header.frame_id or '<empty>'}"
-                    )
-                self.get_logger().warning(
-                    "Dropped a LiDAR cloud after waiting "
-                    f"{self.transform_wait_timeout.nanoseconds * 1.0e-9:.2f}s for "
-                    + " and ".join(missing),
-                    throttle_duration_sec=5.0,
-                )
+        if self.target_stamp is not None and stamp <= self.target_stamp:
             return
-        try:
-            transform = self.tf_buffer.lookup_transform(
-                self.body_frame,
-                message.header.frame_id,
-                transform_time,
-                timeout=Duration(seconds=0.0),
-            )
-        except TransformException:
+        position = message.relative_position
+        velocity = message.relative_velocity
+        relative = (position.x, position.y, position.z)
+        relative_velocity = (velocity.x, velocity.y, velocity.z)
+        if not all(math.isfinite(x) for x in relative + relative_velocity) or norm(relative) < 0.1:
             return
-        self.cloud_queue.popleft()
-        self._process_cloud(message, stamp, transform)
-
-    def _process_cloud(
-        self, message: PointCloud2, stamp: Time, transform: TransformStamped
-    ) -> None:
-        translation = transform.transform.translation
-        rotation = transform.transform.rotation
-        transform_translation = (translation.x, translation.y, translation.z)
-        transform_rotation = (rotation.x, rotation.y, rotation.z, rotation.w)
-        # base_link <- sensor: preserve the real LiDAR mounting orientation so
-        # guidance aims the sensor axis rather than assuming body +X.
-        self.lidar_mount_rotation = transform_rotation
-        self.lidar_mount_known = True
-        points = [
-            point
-            for point in point_cloud_xyz(message)
-            if self.min_target_range <= norm(point) <= self.max_target_range
-        ]
-        sampled = voxel_downsample(points, self.voxel_size, self.max_points)
-        clusters = euclidean_clusters(sampled, self.cluster_tolerance, self.cluster_min_points)
-        if not clusters:
-            return
-        candidates_body: List[Vector3] = []
-        for cluster in clusters:
-            center_sensor = bounding_box_center(cluster)
-            if self.target_center_offset:
-                center_sensor = add(
-                    center_sensor,
-                    scale(normalize(center_sensor), self.target_center_offset),
-                )
-            candidates_body.append(
-                transform_point(transform_translation, transform_rotation, center_sensor)
-            )
-
-        pose_position, pose_orientation = self._body_pose_at(stamp)
-        candidates = [
-            add(pose_position, rotate_vector(pose_orientation, center_body))
-            for center_body in candidates_body
-        ]
-
-        received = self.get_clock().now()
-        if self.target is None:
-            if self.twist is None:
-                return
-            if self.target_cluster_index >= len(candidates):
-                return
-            selected = candidates[self.target_cluster_index]
-            self.target_velocity = self._twist_linear()
-            self.target_observations = 1
-        else:
-            assert self.target_stamp is not None
-            elapsed = (stamp - self.target_stamp).nanoseconds * 1.0e-9
-            if elapsed <= 1.0e-3:
-                return
-            predicted = add(self.target, scale(self.target_velocity, elapsed))
-            measurement = min(
-                candidates, key=lambda candidate: norm(subtract(candidate, predicted))
-            )
-            innovation = subtract(measurement, predicted)
-            if norm(innovation) > self.target_max_jump:
-                return
-            selected = add(
-                predicted,
-                scale(innovation, self.target_filter_alpha),
-            )
-            measured_velocity = scale(subtract(selected, self.target), 1.0 / elapsed)
-            self.target_velocity = add(
-                scale(
-                    self.target_velocity, 1.0 - self.target_velocity_filter_alpha
-                ),
-                scale(measured_velocity, self.target_velocity_filter_alpha),
-            )
-            self.target_observations += 1
-        self.target = selected
-        self.target_received = received
+        if self.target_id and message.target_id != self.target_id:
+            self._reset_target_tracking()
+        self.target_id = message.target_id
+        self.target = relative
+        self.target_velocity = relative_velocity
         self.target_stamp = stamp
-        self.last_target = selected
-        self.last_target_velocity = self.target_velocity
+        self.target_received = self.get_clock().now()
+        self.target_observations = message.observations
+        self.last_target = relative
+        self.last_target_velocity = relative_velocity
         self.last_target_stamp = stamp
-        self.last_target_received = received
+        self.last_target_received = self.target_received
         self.search_started = None
         self.search_reference_direction = None
+
+    def _refresh_lidar_mount(self) -> None:
+        try:
+            transform = self.tf_buffer.lookup_transform(self.body_frame, self.lidar_frame, Time())
+        except TransformException:
+            self.lidar_mount_known = False
+            return
+        q = transform.transform.rotation
+        t = transform.transform.translation
+        self.lidar_mount_rotation = (q.x, q.y, q.z, q.w)
+        self.lidar_mount_translation = (t.x, t.y, t.z)
+        self.lidar_mount_known = True
+
+    def _sensor_direction(self, target: Vector3) -> Vector3:
+        sensor_position = add(self._pose_position(), rotate_vector(
+            self._pose_quaternion(), self.lidar_mount_translation))
+        return subtract(target, sensor_position)
 
     def receive_image(self, message: Image) -> None:
         if self.pending_capture is None or self.complete:
@@ -487,8 +338,7 @@ class DebrisOrbitNode(Node):
         self.saved_captures += 1
         self.get_logger().info(f"Saved capture {self.saved_captures}/{self.capture_count}: {path}")
         if self.saved_captures >= self.capture_count:
-            self.complete = True
-            self._publish_status("complete", image_path=str(path))
+            self._publish_status("captures_complete", image_path=str(path))
 
     def _initialize_orbit(self, target: Vector3) -> bool:
         if self.pose is None:
@@ -518,16 +368,27 @@ class DebrisOrbitNode(Node):
             return
         if self._update_detumble_mode(now):
             return
+        self._refresh_lidar_mount()
+        if not self.lidar_mount_known:
+            self._publish_idle_setpoint(now)
+            self._publish_status("waiting_for_lidar_transform")
+            return
         if (
             self.target is None
             or self.target_received is None
             or now - self.target_received > self.target_timeout
+            or self.target_stamp is None
+            or abs((self._state_stamp() - self.target_stamp).nanoseconds) > self.target_timeout.nanoseconds
         ):
             self._reset_target_tracking()
-            self._publish_search_setpoint(now)
+            if self.target_source == "truth":
+                self._publish_idle_setpoint(now)
+                self._publish_status("waiting_for_truth_target")
+            else:
+                self._publish_search_setpoint(now)
             return
         if self.target_observations < self.target_acquisition_samples:
-            target = self._predicted_target(now)
+            target = self._predicted_target(self._state_stamp())
             if target is not None:
                 self._publish_target_attitude_setpoint(now, target)
             self._publish_status(
@@ -536,7 +397,7 @@ class DebrisOrbitNode(Node):
                 required_observations=self.target_acquisition_samples,
             )
             return
-        target = self._predicted_target(now)
+        target = self._predicted_target(self._state_stamp())
         if target is None:
             self._publish_search_setpoint(now)
             return
@@ -549,18 +410,21 @@ class DebrisOrbitNode(Node):
         if self.orbit_started is None:
             desired_angle = 0.0
         else:
-            elapsed = (now - self.orbit_started).nanoseconds * 1.0e-9
-            desired_angle = self.angular_speed * elapsed
+            # Advance along the circle at the measured azimuth. A wall-clock
+            # trajectory would run away while the craft aligns or is thrust-limited.
+            radial = subtract(self._pose_position(), target)
+            desired_angle = math.atan2(dot(radial, self.basis_v), dot(radial, self.basis_u))
         cosine = math.cos(desired_angle)
         sine = math.sin(desired_angle)
         radial_unit = add(scale(self.basis_u, cosine), scale(self.basis_v, sine))
         tangent_unit = add(scale(self.basis_u, -sine), scale(self.basis_v, cosine))
         desired_position = add(target, scale(radial_unit, self.orbit_radius))
+        target_world_velocity = add(self._twist_linear(), self.target_velocity)
         desired_velocity = (
-            self.target_velocity
+            target_world_velocity
             if self.orbit_started is None
             else add(
-                self.target_velocity,
+                target_world_velocity,
                 scale(tangent_unit, self.orbit_radius * self.angular_speed),
             )
         )
@@ -568,28 +432,45 @@ class DebrisOrbitNode(Node):
         position = self._pose_position()
         velocity = self._twist_linear()
         position_error = subtract(desired_position, position)
+        # Limit approach speed through the position/velocity loop. A distant
+        # position step otherwise holds RCS at maximum until too late to brake.
+        desired_position = add(position, clamp_norm(position_error, self.max_position_step))
         current_q = self._pose_quaternion()
         desired_q = body_orientation_for_sensor_direction(
-            current_q, self.lidar_mount_rotation, subtract(target, position)
+            current_q, self.lidar_mount_rotation, self._sensor_direction(target)
         )
         attitude_error = quaternion_error_vector(desired_q, current_q)
+        pointing_error = norm(attitude_error)
+        if pointing_error > self.pointing_tolerance:
+            # Brake relative translation until the real sensor axis is aligned.
+            desired_position = position
+            desired_velocity = target_world_velocity
+        direction = self._sensor_direction(target)
+        mount_velocity = cross(self._twist_angular(), rotate_vector(current_q, self.lidar_mount_translation))
+        line_of_sight_rate = scale(cross(direction, subtract(self.target_velocity, mount_velocity)),
+                                   1.0 / max(dot(direction, direction), 0.01))
         self._publish_setpoint(
             now,
             ControlSetpoint.MODE_SIX_DOF,
             desired_position,
             desired_q,
             desired_velocity,
-            (0.0, 0.0, 0.0)
-            if self.orbit_started is None
-            else scale(
-                self.plane_normal,
-                self.angular_speed * self.orbit_direction,
-            ),
+            line_of_sight_rate,
         )
         if self.orbit_started is None:
+            self._publish_progress_status(
+                now,
+                "approaching_orbit",
+                target_range_m=round(norm(subtract(target, position)), 2),
+                position_error_m=round(norm(position_error), 2),
+                relative_speed_mps=round(
+                    norm(self.target_velocity), 2
+                ),
+                attitude_error_deg=round(math.degrees(norm(attitude_error)), 1),
+            )
             if (
                 norm(position_error) <= self.arrival_position_tolerance
-                and norm(subtract(velocity, self.target_velocity))
+                and norm(self.target_velocity)
                 <= self.arrival_speed_tolerance
                 and norm(attitude_error) <= self.arrival_attitude_tolerance
             ):
@@ -599,10 +480,16 @@ class DebrisOrbitNode(Node):
                 self.pending_capture = (0, 0.0)
                 self._publish_status("orbiting")
             return
-        self._update_capture_progress(position, target)
+        self._publish_progress_status(now, "orbiting" if pointing_error <= self.pointing_tolerance else "aligning_lidar",
+            target_range_m=round(norm(subtract(target, position)), 3),
+            relative_speed_mps=round(norm(self.target_velocity), 3),
+            orbit_progress_deg=round(math.degrees(self.actual_angle or 0.0), 2),
+            attitude_error_deg=round(math.degrees(pointing_error), 2))
+        if pointing_error <= self.arrival_attitude_tolerance:
+            self._update_capture_progress(position, target)
 
     def _publish_target_attitude_setpoint(self, now: Time, target: Vector3) -> None:
-        direction = subtract(target, self._pose_position())
+        direction = self._sensor_direction(target)
         desired_q = body_orientation_for_sensor_direction(
             self._pose_quaternion(), self.lidar_mount_rotation, direction
         )
@@ -674,6 +561,10 @@ class DebrisOrbitNode(Node):
             self.actual_angle = wrapped
         else:
             self.actual_angle = unwrap_angle(self.actual_angle, wrapped)
+        if self.actual_angle >= 2.0 * math.pi and self.saved_captures >= self.capture_count:
+            self.complete = True
+            if self.stop_after_capture:
+                self._publish_status("complete")
         if self.pending_capture is not None or self.saved_captures >= self.capture_count:
             return
         if self.actual_angle + self.capture_tolerance >= self.next_capture_angle:
@@ -683,7 +574,8 @@ class DebrisOrbitNode(Node):
 
     def _state_is_fresh(self, now: Time) -> bool:
         return bool(
-            self.pose is not None
+            self.lifecycle_key is not None
+            and self.pose is not None
             and self.twist is not None
             and self.pose_received is not None
             and self.twist_received is not None
@@ -734,41 +626,34 @@ class DebrisOrbitNode(Node):
         self.orbit_started = None
         self.actual_angle = None
         self.pending_capture = None
+        self.next_progress_status = None
+
+    def _publish_progress_status(self, now: Time, state: str, **extra: object) -> None:
+        """Publish bounded-rate guidance diagnostics for live integration tests."""
+        if self.next_progress_status is not None and now < self.next_progress_status:
+            return
+        self.next_progress_status = now + Duration(seconds=1.0)
+        self._publish_status(state, **extra)
 
     def _remembered_target(self, now: Time) -> Optional[Vector3]:
-        if (
-            self.last_target is None
-            or self.last_target_stamp is None
-            or self.last_target_received is None
-            or now - self.last_target_received > self.search_memory_timeout
-        ):
+        if (self.last_target is None or self.last_target_stamp is None
+                or self.last_target_received is None
+                or now - self.last_target_received > self.search_memory_timeout):
             return None
-        elapsed = max(0.0, (now - self.last_target_stamp).nanoseconds * 1.0e-9)
-        return add(self.last_target, scale(self.last_target_velocity, elapsed))
+        dt = (self._state_stamp() - self.last_target_stamp).nanoseconds * 1.0e-9
+        return add(self._pose_position(), add(self.last_target, scale(self.last_target_velocity, dt)))
 
-    def _state_reaches_stamp(self, stamp: Time) -> bool:
-        if self.pose is None or self.twist is None:
-            return False
-        pose_stamp = Time.from_msg(self.pose.header.stamp)
-        twist_stamp = Time.from_msg(self.twist.header.stamp)
-        return pose_stamp >= stamp and twist_stamp >= stamp
-
-    def _body_pose_at(self, stamp: Time) -> Tuple[Vector3, Tuple[float, float, float, float]]:
-        """Back-propagate the newest Ground Truth sample to a queued cloud stamp."""
-        assert self.pose is not None and self.twist is not None
-        pose_stamp = Time.from_msg(self.pose.header.stamp)
-        elapsed = (stamp - pose_stamp).nanoseconds * 1.0e-9
-        position = add(self._pose_position(), scale(self._twist_linear(), elapsed))
-        orientation = integrate_world_orientation(
-            self._pose_quaternion(), self._twist_angular(), elapsed
-        )
-        return position, orientation
-
-    def _predicted_target(self, now: Time) -> Optional[Vector3]:
+    def _predicted_target(self, reference_stamp: Time) -> Optional[Vector3]:
         if self.target is None or self.target_stamp is None:
             return None
-        elapsed = max(0.0, (now - self.target_stamp).nanoseconds * 1.0e-9)
-        return add(self.target, scale(self.target_velocity, elapsed))
+        # Extrapolate only relative motion: a 2200 m/s common orbital velocity
+        # must never turn a 50 ms scheduling delay into 110 m of range error.
+        dt = (reference_stamp - self.target_stamp).nanoseconds * 1.0e-9
+        return add(self._pose_position(), add(self.target, scale(self.target_velocity, dt)))
+
+    def _state_stamp(self) -> Time:
+        assert self.pose is not None
+        return Time.from_msg(self.pose.header.stamp)
 
     def _pose_position(self) -> Vector3:
         assert self.pose is not None
@@ -800,7 +685,7 @@ class DebrisOrbitNode(Node):
         angular_velocity: Vector3,
     ) -> None:
         message = ControlSetpoint()
-        message.header.stamp = now.to_msg()
+        message.header.stamp = (self._state_stamp() if self.pose is not None else now).to_msg()
         message.header.frame_id = self.world_frame
         message.mode = mode
         message.position.x, message.position.y, message.position.z = position
@@ -835,6 +720,8 @@ class DebrisOrbitNode(Node):
     def _publish_status(self, state: str, **extra: object) -> None:
         payload = {
             "state": state,
+            "target_source": self.target_source,
+            "target_id": self.target_id,
             "demo_instance_id": self.demo_instance_id,
             "captures": self.saved_captures,
             "capture_count": self.capture_count,
@@ -856,6 +743,11 @@ def main(args=None) -> None:
         rclpy.spin(node)
     except (ExternalShutdownException, KeyboardInterrupt):
         pass
+    except RuntimeError:
+        # Jazzy can surface a pybind take_message conversion error while the
+        # launch service is invalidating subscriptions during Ctrl-C.
+        if rclpy.ok():
+            raise
     finally:
         try:
             node.destroy_node()
