@@ -46,6 +46,15 @@ namespace KerbalLiDAR
             // in VesselAngularVelocityBody(), not the polar-vector mapping.
             var local = target.angularVelocity;
             var gyro = new Vector3(-local.y, local.x, local.z);
+            // Unity physics changes between surface-rotating and inertial
+            // frames at the body's rotation threshold. A physical gyro always
+            // measures inertial rotation, including the planet's spin on ground.
+            if (FlightGlobals.RefFrameIsRotating)
+            {
+                var spin = PlanetSpinAxisWorld(target.mainBody);
+                gyro += new Vector3(Vector3.Dot(spin, reference.up),
+                    Vector3.Dot(spin, -reference.right), Vector3.Dot(spin, -reference.forward));
+            }
             if (!FiniteImuVector(acceleration) || !FiniteImuVector(gyro)) return;
 
             var builder = new StringBuilder(384);
@@ -58,6 +67,15 @@ namespace KerbalLiDAR
             AppendVector(builder, "linearAcceleration", acceleration);
             builder.Append('}');
             Send(builder.ToString());
+        }
+
+        // Physical right-hand spin axis (north), expressed in Unity world axes.
+        // This is a direction, not a Unity axial-vector encoding.
+        private static Vector3 PlanetSpinAxisWorld(CelestialBody body)
+        {
+            if (body == null || !body.rotates || Math.Abs(body.rotationPeriod) < 1e-6)
+                return Vector3.zero;
+            return body.transform.up.normalized * (float)(2.0 * Math.PI / body.rotationPeriod);
         }
 
         private static bool FiniteImuVector(Vector3 value)

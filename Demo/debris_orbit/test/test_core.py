@@ -134,8 +134,8 @@ class CoreTests(unittest.TestCase):
             "/ksp_vessel/camera/orbit_camera/image_raw",
         )
         self.assertEqual(
-            topics.ground_truth_pose,
-            "/ksp_vessel/ground_truth/pose",
+            topics.imu_data,
+            "/ksp_vessel/imu/data_raw",
         )
         self.assertEqual(
             topics.control_setpoint,

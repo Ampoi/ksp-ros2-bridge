@@ -51,7 +51,7 @@ ros2 topic echo --once /ksp_vessel/lidar_3d/roof_lidar/points
 |---|---:|---:|---:|---:|
 | Near | 10〜30 m | 160 rays/sr | 30 m | 1005 |
 | Medium | 50〜150 m | 320 rays/sr | 100 m | 2011 |
-| Long | 150〜250 m | 512 rays/sr | 250 m | 3217 |
+| Long | 150〜250 m | 1024 rays/sr | 250 m | 4096（ray上限） |
 
 ## Topic作成と削除
 

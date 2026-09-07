@@ -2,7 +2,7 @@
 <package format="3">
   <name>debris_orbit</name>
   <version>0.2.0</version>
-  <description>LiDAR-guided debris orbit and 30-degree image capture demo for KSP ROS2.</description>
+  <description>LiDAR/IMU debris orbit without Ground Truth and 36-degree image capture demo for KSP ROS2.</description>
   <maintainer email="user@example.com">Kerbal LiDAR Lab</maintainer>
   <license>MIT</license>
 

@@ -20,8 +20,7 @@ class VesselTopics(NamedTuple):
 
     lidar_points: str
     camera_image: str
-    ground_truth_pose: str
-    ground_truth_twist: str
+    imu_data: str
     control_setpoint: str
     controller_status: str
     demo_status: str
@@ -54,8 +53,7 @@ def vessel_topics(
     return VesselTopics(
         lidar_points=f"{root}/lidar_3d/{lidar_id}/points",
         camera_image=f"{root}/camera/{camera_id}/image_raw",
-        ground_truth_pose=f"{root}/ground_truth/pose",
-        ground_truth_twist=f"{root}/ground_truth/twist",
+        imu_data=f"{root}/imu/data_raw",
         control_setpoint=f"{root}/demos/debris_orbit/{instance}/setpoint",
         controller_status=f"{root}/demos/debris_orbit/{instance}/controller_status",
         demo_status=f"{root}/demos/debris_orbit/{instance}/status",
@@ -283,9 +281,8 @@ def search_direction(
     phase = 2.0 * math.pi * max(0.0, elapsed) / max(1.0e-6, period)
     yaw = yaw_amplitude * math.sin(phase)
     pitch = pitch_amplitude * math.sin(2.0 * phase)
-    return normalize(
-        add(center, add(scale(side, math.tan(yaw)), scale(local_up, math.tan(pitch))))
-    )
+    return add(scale(add(scale(center, math.cos(yaw)), scale(side, math.sin(yaw))),
+                     math.cos(pitch)), scale(local_up, math.sin(pitch)))
 
 
 def quaternion_error_vector(desired: Quaternion, current: Quaternion) -> Vector3:

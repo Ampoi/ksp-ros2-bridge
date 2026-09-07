@@ -580,12 +580,17 @@ namespace KerbalLiDAR
 
         private bool TryRaycast(Vector3 origin, Vector3 direction, out RaycastHit selectedHit)
         {
+            // Flight metres must not intersect KSP's separately rendered scaled
+            // planets, IVA/portrait colliders, or UI camera geometry. Those
+            // coexist in Unity's scene near the origin but are not local objects.
+            const int flightMask = Physics.DefaultRaycastLayers &
+                ~((1 << 5) | (1 << 10) | (1 << 12) | (1 << 13) | (1 << 16) | (1 << 20));
             if (!ignoreOwnVessel)
             {
-                return Physics.Raycast(origin, direction, out selectedHit, maxDistance, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore);
+                return Physics.Raycast(origin, direction, out selectedHit, maxDistance, flightMask, QueryTriggerInteraction.Ignore);
             }
 
-            var hits = Physics.RaycastAll(origin, direction, maxDistance, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore);
+            var hits = Physics.RaycastAll(origin, direction, maxDistance, flightMask, QueryTriggerInteraction.Ignore);
             Array.Sort(hits, CompareRaycastHits);
 
             for (var i = 0; i < hits.Length; i++)
@@ -849,7 +854,7 @@ namespace KerbalLiDAR
                     break;
                 case "long":
                     maxDistance = longRangeMeters;
-                    hemisphereDensity = 512f;
+                    hemisphereDensity = 1024f;
                     break;
                 default:
                     rangeProfile = "medium";

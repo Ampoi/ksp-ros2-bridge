@@ -26,6 +26,7 @@ class GroundTruthPacketTests(unittest.TestCase):
                 "angularVelocity": [0.1, 0.2, 0.3],
                 "linearVelocityBody": [6, 5, 4],
                 "angularVelocityBody": [0.3, 0.2, 0.1],
+                "frameAngularVelocity": [0, 0.00029, 0],
                 "linearAcceleration": [0, 0, -9.81],
                 "angularAcceleration": [0, 0, 0],
             }
@@ -35,6 +36,7 @@ class GroundTruthPacketTests(unittest.TestCase):
         self.assertEqual(state.origin_sequence, 2)
         self.assertEqual(state.linear_velocity_body, (6.0, 5.0, 4.0))
         self.assertEqual(state.angular_velocity_body, (0.3, 0.2, 0.1))
+        self.assertEqual(state.frame_angular_velocity, (0, 0.00029, 0))
 
     def test_rejects_nonfinite_ground_truth(self):
         packet = {

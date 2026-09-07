@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import math
 import os
+from collections import deque
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -45,7 +47,7 @@ from .core import (
 
 
 class DebrisOrbitNode(Node):
-    """Orbit a relative target from either truth or LiDAR, through one interface."""
+    """Orbit a LiDAR/IMU relative target through the common controller."""
 
     def __init__(self, **kwargs) -> None:
         super().__init__("debris_orbit", **kwargs)
@@ -64,8 +66,9 @@ class DebrisOrbitNode(Node):
         )
         self.target_source = self._string("target_source")
         camera_topic = self._string("camera_topic") or default_topics.camera_image
-        pose_topic = self._string("pose_topic") or default_topics.ground_truth_pose
-        twist_topic = self._string("twist_topic") or default_topics.ground_truth_twist
+        navigation = default_topics.demo_status.rsplit('/', 1)[0] + '/navigation'
+        pose_topic = self._string("pose_topic") or navigation + '/pose'
+        twist_topic = self._string("twist_topic") or navigation + '/twist'
         setpoint_topic = self._string("setpoint_topic") or default_topics.control_setpoint
         status_topic = self._string("status_topic") or default_topics.demo_status
 
@@ -116,7 +119,11 @@ class DebrisOrbitNode(Node):
         output_directory = os.path.expandvars(
             os.path.expanduser(self._string("output_directory"))
         )
-        self.output_directory = Path(output_directory).resolve()
+        self.output_directory = Path(output_directory).resolve() / safe_filename_component(
+            self.demo_instance_id, 'vehicle') / datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+        self.angle_history = deque(maxlen=200)
+        self.capture_images = deque(maxlen=3)
+        self.capture_sequence = 0
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -183,7 +190,7 @@ class DebrisOrbitNode(Node):
             "camera_sensor_id": "orbit_camera",
             "vessel_topic_prefix": "/ksp_vessel",
             "target_topic": "",
-            "target_source": "truth",
+            "target_source": "lidar_imu",
             "lidar_frame": "",
             "translation_pointing_tolerance_deg": 8.0,
             "camera_topic": "",
@@ -191,7 +198,7 @@ class DebrisOrbitNode(Node):
             "twist_topic": "",
             "setpoint_topic": "",
             "status_topic": "",
-            "world_frame": "ground_truth_enu",
+            "world_frame": "debris_inertial",
             "body_frame": "base_link",
             "orbit_radius": 15.0,
             "max_position_step": 2.0,
@@ -201,9 +208,9 @@ class DebrisOrbitNode(Node):
             "detumble_enter_rate_deg_s": 6.0,
             "detumble_exit_rate_deg_s": 2.0,
             "search_start_delay_sec": 0.3,
-            "search_yaw_amplitude_deg": 45.0,
+            "search_yaw_amplitude_deg": 180.0,
             "search_pitch_amplitude_deg": 20.0,
-            "search_period_sec": 120.0,
+            "search_period_sec": 300.0,
             "search_memory_timeout_sec": 30.0,
             "arrival_position_tolerance": 1.5,
             "arrival_speed_tolerance": 0.25,
@@ -212,8 +219,8 @@ class DebrisOrbitNode(Node):
             "state_timeout_sec": 1.0,
             "target_timeout_sec": 3.0,
             "control_rate_hz": 20.0,
-            "capture_step_deg": 30.0,
-            "capture_count": 12,
+            "capture_step_deg": 36.0,
+            "capture_count": 10,
             "capture_tolerance_deg": 2.0,
             "stop_after_capture": False,
             "output_directory": "debris_orbit_captures",
@@ -318,7 +325,28 @@ class DebrisOrbitNode(Node):
     def receive_image(self, message: Image) -> None:
         if self.pending_capture is None or self.complete:
             return
+        self.capture_images.append(message)
+        self._try_capture_image()
+
+    def _try_capture_image(self) -> None:
+        if self.pending_capture is None or not self.angle_history:
+            return
         capture_index, angle = self.pending_capture
+        selected = None
+        measured_angle = None
+        for message in self.capture_images:
+            stamp = Time.from_msg(message.header.stamp).nanoseconds
+            for left, right in zip(self.angle_history, list(self.angle_history)[1:]):
+                if left[0] <= stamp <= right[0] and right[0] > left[0]:
+                    measured_angle = left[1] + (right[1]-left[1])*(stamp-left[0])/(right[0]-left[0])
+                    if 0 <= measured_angle-angle <= self.capture_tolerance:
+                        selected = message
+                    break
+            if selected is not None:
+                break
+        if selected is None:
+            return
+        message = selected
         try:
             image_data = png_bytes(
                 message.width, message.height, message.encoding, message.step, bytes(message.data)
@@ -327,17 +355,27 @@ class DebrisOrbitNode(Node):
             platform_name = safe_filename_component(self.demo_instance_id, "vehicle")
             filename = (
                 f"{platform_name}_detected_debris_"
-                f"{int(round(math.degrees(angle))) % 360:03d}deg_{capture_index:02d}.png"
+                f"{int(round(math.degrees(angle))) % 360:03d}deg_{capture_index:05d}.png"
             )
             path = self.output_directory / filename
             path.write_bytes(image_data)
+            path.with_suffix('.json').write_text(json.dumps({
+                'source': self.target_source,
+                'image_stamp_sec': message.header.stamp.sec + message.header.stamp.nanosec*1e-9,
+                'image_frame': message.header.frame_id,
+                'capture_sequence': capture_index,
+                'requested_angle_deg': math.degrees(angle),
+                'measured_angle_deg': math.degrees(measured_angle),
+                'orbit': math.floor((angle + 1e-10) / (2*math.pi)),
+            }, indent=2) + '\n')
         except (OSError, ValueError) as error:
             self.get_logger().error(f"Could not save capture: {error}")
             return
         self.pending_capture = None
+        self.capture_images.clear()
         self.saved_captures += 1
-        self.get_logger().info(f"Saved capture {self.saved_captures}/{self.capture_count}: {path}")
-        if self.saved_captures >= self.capture_count:
+        self.get_logger().info(f"Saved capture {self.saved_captures} at {math.degrees(angle):.0f} deg: {path}")
+        if self.saved_captures == self.capture_count:
             self._publish_status("captures_complete", image_path=str(path))
 
     def _initialize_orbit(self, target: Vector3) -> bool:
@@ -381,11 +419,7 @@ class DebrisOrbitNode(Node):
             or abs((self._state_stamp() - self.target_stamp).nanoseconds) > self.target_timeout.nanoseconds
         ):
             self._reset_target_tracking()
-            if self.target_source == "truth":
-                self._publish_idle_setpoint(now)
-                self._publish_status("waiting_for_truth_target")
-            else:
-                self._publish_search_setpoint(now)
+            self._publish_search_setpoint(now)
             return
         if self.target_observations < self.target_acquisition_samples:
             target = self._predicted_target(self._state_stamp())
@@ -477,7 +511,9 @@ class DebrisOrbitNode(Node):
                 self.orbit_started = now
                 self.actual_angle = 0.0
                 self.next_capture_angle = self.capture_step
-                self.pending_capture = (0, 0.0)
+                self.pending_capture = (self.capture_sequence, 0.0)
+                self.capture_sequence += 1
+                self.angle_history.append((self._state_stamp().nanoseconds, 0.0))
                 self._publish_status("orbiting")
             return
         self._publish_progress_status(now, "orbiting" if pointing_error <= self.pointing_tolerance else "aligning_lidar",
@@ -485,8 +521,8 @@ class DebrisOrbitNode(Node):
             relative_speed_mps=round(norm(self.target_velocity), 3),
             orbit_progress_deg=round(math.degrees(self.actual_angle or 0.0), 2),
             attitude_error_deg=round(math.degrees(pointing_error), 2))
-        if pointing_error <= self.arrival_attitude_tolerance:
-            self._update_capture_progress(position, target)
+        self._update_capture_progress(position, target,
+            allow_capture=pointing_error <= self.arrival_attitude_tolerance)
 
     def _publish_target_attitude_setpoint(self, now: Time, target: Vector3) -> None:
         direction = self._sensor_direction(target)
@@ -553,7 +589,7 @@ class DebrisOrbitNode(Node):
             remembered_target=self._remembered_target(now) is not None,
         )
 
-    def _update_capture_progress(self, position: Vector3, target: Vector3) -> None:
+    def _update_capture_progress(self, position: Vector3, target: Vector3, allow_capture=True) -> None:
         assert self.basis_u is not None and self.basis_v is not None
         radial = subtract(position, target)
         wrapped = math.atan2(dot(radial, self.basis_v), dot(radial, self.basis_u))
@@ -561,15 +597,20 @@ class DebrisOrbitNode(Node):
             self.actual_angle = wrapped
         else:
             self.actual_angle = unwrap_angle(self.actual_angle, wrapped)
-        if self.actual_angle >= 2.0 * math.pi and self.saved_captures >= self.capture_count:
+        self.angle_history.append((self._state_stamp().nanoseconds, self.actual_angle))
+        self._try_capture_image()
+        if self.stop_after_capture and self.actual_angle >= 2.0 * math.pi and self.saved_captures >= self.capture_count:
             self.complete = True
-            if self.stop_after_capture:
-                self._publish_status("complete")
-        if self.pending_capture is not None or self.saved_captures >= self.capture_count:
+            self._publish_status("complete")
+        if self.pending_capture is not None and self.actual_angle > self.pending_capture[1] + self.capture_tolerance + self.angular_speed:
+            self._publish_status('capture_missed', angle_deg=math.degrees(self.pending_capture[1]))
+            self.pending_capture = None
+            self.capture_images.clear()
+        if self.pending_capture is not None or self.complete:
             return
-        if self.actual_angle + self.capture_tolerance >= self.next_capture_angle:
-            index = self.saved_captures
-            self.pending_capture = (index, self.next_capture_angle)
+        if self.actual_angle >= self.next_capture_angle and allow_capture:
+            self.pending_capture = (self.capture_sequence, self.next_capture_angle)
+            self.capture_sequence += 1
             self.next_capture_angle += self.capture_step
 
     def _state_is_fresh(self, now: Time) -> bool:
@@ -626,6 +667,8 @@ class DebrisOrbitNode(Node):
         self.orbit_started = None
         self.actual_angle = None
         self.pending_capture = None
+        self.angle_history.clear()
+        self.capture_images.clear()
         self.next_progress_status = None
 
     def _publish_progress_status(self, now: Time, state: str, **extra: object) -> None:

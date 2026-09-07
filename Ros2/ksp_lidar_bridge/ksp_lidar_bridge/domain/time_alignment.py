@@ -11,8 +11,12 @@ Vector3 = Tuple[float, float, float]
 class SimulationClock:
     """Map KSP universal time onto the ROS clock while detecting time jumps."""
 
-    def __init__(self, jump_tolerance_sec: float = 0.5) -> None:
+    def __init__(self, jump_tolerance_sec: float = 0.5, continuous: bool = False) -> None:
         self.jump_tolerance_sec = jump_tolerance_sec
+        self.continuous = continuous
+        self._offset_sec = None
+
+    def reset(self) -> None:
         self._offset_sec = None
 
     def map_nanoseconds(self, universal_time: float, receipt_nanoseconds: int) -> int:
@@ -23,7 +27,7 @@ class SimulationClock:
         if self._offset_sec is None:
             self._offset_sec = candidate
         predicted = universal_time + self._offset_sec
-        if abs(predicted - receipt_sec) > self.jump_tolerance_sec:
+        if not self.continuous and abs(predicted - receipt_sec) > self.jump_tolerance_sec:
             self._offset_sec = candidate
             predicted = receipt_sec
         return int(round(predicted * 1.0e9))

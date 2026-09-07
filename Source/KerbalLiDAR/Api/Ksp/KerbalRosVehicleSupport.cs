@@ -1268,6 +1268,14 @@ namespace KerbalLiDAR
             // sign, so they agree with right-handed ROS quaternion derivatives.
             var linearVelocityBody = WorldVectorToBody(vessel.srf_velocity);
             var angularVelocityBody = VesselAngularVelocityBody();
+            var planetSpin = PlanetSpinAxisWorld(anchorBody);
+            var frameAngularVelocity = WorldVectorToAnchor(planetSpin, currentEast, currentNorth, currentUp);
+            // The ENU truth frame is body-fixed, even when Unity physics is not.
+            if (!FlightGlobals.RefFrameIsRotating)
+            {
+                angularVelocity -= frameAngularVelocity;
+                angularVelocityBody -= WorldVectorToBody(planetSpin);
+            }
             var now = Planetarium.GetUniversalTime();
             var elapsed = Math.Max(0.0001, now - previousTruthTime);
             var linearAcceleration = derivativeReady
@@ -1300,6 +1308,7 @@ namespace KerbalLiDAR
             AppendVector(builder, "angularVelocity", angularVelocity);
             AppendVector(builder, "linearVelocityBody", linearVelocityBody);
             AppendVector(builder, "angularVelocityBody", angularVelocityBody);
+            AppendVector(builder, "frameAngularVelocity", frameAngularVelocity);
             AppendVector(builder, "linearAcceleration", linearAcceleration);
             AppendVector(builder, "angularAcceleration", angularAcceleration);
             builder.Append('}');

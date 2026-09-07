@@ -55,7 +55,6 @@ def _launch_demo(context):
     for name in ("demo_instance_id", "vessel_topic_prefix", "lidar_sensor_id", "target_source"):
         if name in guidance_overrides:
             estimator_overrides[name] = guidance_overrides[name]
-    estimator_overrides["target_vessel_id"] = LaunchConfiguration("target_vessel_id").perform(context).strip()
     target_topic = LaunchConfiguration("target_topic").perform(context).strip() or f"{prefix}/demos/debris_orbit/{instance}/target"
     guidance_overrides["target_topic"] = target_topic
     estimator_overrides["target_topic"] = target_topic
@@ -63,6 +62,14 @@ def _launch_demo(context):
     if radius:
         guidance_overrides["orbit_radius"] = float(radius)
         estimator_overrides["orbit_radius"] = float(radius)
+    navigation = f"{prefix}/demos/debris_orbit/{instance}/navigation"
+    local_frame = "debris_inertial_" + instance
+    for overrides in (guidance_overrides, estimator_overrides, controller_overrides):
+        overrides["world_frame"] = local_frame
+    for overrides in (guidance_overrides, controller_overrides):
+        overrides["pose_topic"] = navigation + "/pose"
+        overrides["twist_topic"] = navigation + "/twist"
+    controller_overrides["body_twist_topic"] = navigation + "/twist_body"
     guidance_parameters = [LaunchConfiguration("config_file")]
     controller_parameters = [LaunchConfiguration("config_file")]
     if guidance_overrides:
@@ -106,8 +113,7 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("rviz", default_value="false"),
         DeclareLaunchArgument("estimator_enabled", default_value="true"),
         DeclareLaunchArgument("orbit_radius", default_value=""),
-        DeclareLaunchArgument("target_source", default_value="truth", choices=["truth", "lidar"]),
-        DeclareLaunchArgument("target_vessel_id", default_value=""),
+        DeclareLaunchArgument("target_source", default_value="lidar_imu", choices=["lidar_imu"]),
         DeclareLaunchArgument("target_topic", default_value=""),
         DeclareLaunchArgument("lidar_frame", default_value=""),
         DeclareLaunchArgument("enabled", default_value=""),

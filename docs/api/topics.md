@@ -11,13 +11,15 @@ Topicは、操作中の機体に属するものを`/ksp_vessel`、bridgeプロ�
 
 ## IMU
 
+センサーtimestampの間隔はKSPの物理時間を保持します。通信遅延やゲームの描画速度に合わせて飛行中にoffsetを飛ばしません。`udp_bridge --disable-ground-truth`ではIMUの機体IDからlifecycleを生成し、真値Topicとworld TFの配信を完全に無効化できます。このモードの`VesselLifecycle.world_frame`は空で、`origin_sequence`は機体切替・時刻巻き戻り・IMU timeout復帰時に更新される世代番号です。
+
 全機体で追加パーツ・設定なしに、操作中の機体の3軸ジャイロと3軸加速度計を出力します。機体切替時も同じTopicを使用します。
 
 | 方向 | Topic | 型 | QoS / 内容 |
 |---|---|---|---|
 | Publish | `/ksp_vessel/imu/data_raw` | `sensor_msgs/msg/Imu` | Best Effort / Volatile / depth 10。物理サンプル更新時、最大30 Hz |
 
-`header.frame_id=base_link`、軸はX前方・Y左・Z上。`angular_velocity` はrad/s、`linear_acceleration` はm/s²の比力（慣性加速度−重力）です。Z上向きで静止していれば約+g、自由落下中は約0となります。KSPの `perturbation_immediate` を機体軸へ変換し、ノイズやバイアスは追加しません。絶対姿勢は測定しないため `orientation_covariance[0]=-1`、角速度・加速度の共分散は未知を表す全要素0です。[ROS IMU規約（REP-145）](https://www.ros.org/reps/rep-0145.html) の `imu/data_raw` に対応します。
+`header.frame_id=base_link`、軸はX前方・Y左・Z上。`angular_velocity` は慣性系に対するrad/s（KSPの回転物理座標系では惑星の自転分を加算）、`linear_acceleration` はm/s²の比力（慣性加速度−重力）です。Z上向きで静止していれば約+g、自由落下中は約0となります。KSPの `perturbation_immediate` を機体軸へ変換し、ノイズやバイアスは追加しません。絶対姿勢は測定しないため `orientation_covariance[0]=-1`、角速度・加速度の共分散は未知を表す全要素0です。[ROS IMU規約（REP-145）](https://www.ros.org/reps/rep-0145.html) の `imu/data_raw` に対応します。
 
 タイムスタンプはKSPのシミュレーション時刻を既存bridge時計に写像します。Flight以外、物理演算停止（packed）、ポーズ中は新規測定を出力しません。ロード・機体切替・unpack直後は1サンプル待ちます。仮想センサーは機体重心の比力を機体軸で表すもので、個別パーツ位置の回転による加速度はモデル化しません。非アクティブ機体の個別Topicは作成しません。
 
@@ -34,12 +36,15 @@ Topicは、操作中の機体に属するものを`/ksp_vessel`、bridgeプロ�
 | Publish | `/ksp_vessel/ground_truth/nearby_vessels` | `ksp_ros2_interfaces/msg/NearbyVessels` | 自機と近隣機体の同時刻・同原点の絶対位置と速度。最大32機、2500 m以内、同天体・loaded/unpacked |
 | Publish | `/ksp_vessel/ground_truth/twist` | `geometry_msgs/msg/TwistStamped` | Best Effort。ENU速度 |
 | Publish | `/ksp_vessel/ground_truth/twist_body` | `geometry_msgs/msg/TwistStamped` | Best Effort。body速度 |
+| Publish | `/ksp_vessel/ground_truth/frame_angular_velocity` | `geometry_msgs/msg/Vector3Stamped` | 惑星固定ENU軸の慣性系に対する回転角速度。評価器が慣性推定と比較するための情報 |
 | Publish | `/ksp_vessel/ground_truth/acceleration` | `geometry_msgs/msg/AccelStamped` | Best Effort。ENU加速度 |
 | Publish | `/ksp_vessel/joint_states` | `sensor_msgs/msg/JointState` | 全ROSサーボの状態 |
 | Publish | `/ksp_vessel/robot_description` | `std_msgs/msg/String` | Reliable / Transient Local。プロキシURDF |
 | Publish | `/ksp_vessel/root_frame` | `std_msgs/msg/String` | Reliable / Transient Local。RViz Fixed Frame名 |
 | Publish | `/tf` | `tf2_msgs/msg/TFMessage` | Ground TruthとCoM基準proxy rootのdynamic TF |
 | Publish | `/tf_static` | `tf2_msgs/msg/TFMessage` | proxy固定jointとsensor mount |
+
+Ground TruthのENU軸は惑星固定です。真値の角速度もこの軸に対する値に揃え、KSP物理座標系の高度による切替に影響されません。IMUの慣性姿勢と比較する場合は`frame_angular_velocity`による座標回転と速度の輸送項を評価側で加えます。デモの推定器・制御器はこのTopicを購読しません。
 
 ## センサー
 

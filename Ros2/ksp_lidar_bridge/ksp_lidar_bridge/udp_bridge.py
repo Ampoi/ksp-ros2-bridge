@@ -17,6 +17,7 @@ from geometry_msgs.msg import (
     Twist,
     TwistStamped,
     WrenchStamped,
+    Vector3Stamped,
 )
 from ksp_ros2_interfaces.msg import (
     BodyWrenchCommand,
@@ -223,6 +224,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Deprecated unowned WrenchStamped Topic. Empty disables it (default).",
     )
     parser.add_argument("--ground-truth-prefix", default="/ksp_vessel/ground_truth")
+    parser.add_argument("--disable-ground-truth", action="store_true",
+                        help="Drop truth packets and world TF; derive lifecycle from IMU identity only.")
     parser.add_argument("--actuators-prefix", default="/ksp_vessel/actuators")
     parser.add_argument(
         "--docking-ports-prefix",
@@ -250,6 +253,9 @@ class KerbalLidarUdpBridge(Node):
     def __init__(self, args: argparse.Namespace) -> None:
         super().__init__(sanitize_ros_name(args.node_name, "ksp_lidar_udp_bridge"))
         self.args = args
+        self.ground_truth_enabled = not args.disable_ground_truth
+        self.latest_imu_seen_at = 0.0
+        self.last_imu_identity_time = None
         self.topic_prefix = "/" + args.topic_prefix.strip("/")
         self.bridge_prefix = "/" + args.bridge_prefix.strip("/")
         self.lidar_publishers: Dict[str, Any] = {}
@@ -290,14 +296,17 @@ class KerbalLidarUdpBridge(Node):
         self.pending_commands: List[Tuple[int, int, Dict[str, Any]]] = []
         self.pending_command_order = 0
         self.command_sequence = 0
-        self.simulation_clock = SimulationClock()
+        # IMU integration requires physical sample intervals, even when the game
+        # runs slower than wall time or camera packets arrive late. Rebase only
+        # at an explicit vessel/time reset, never on ordinary transport latency.
+        self.simulation_clock = SimulationClock(continuous=True)
         self.latest_ground_truth = None
         self.latest_ground_truth_seen_at = 0.0
         self.active_vessel_id = ""
         self.active_vessel_name = ""
         self.vessel_generation = 0
         self.lifecycle_state = VesselLifecycle.STATE_UNAVAILABLE
-        self.lifecycle_reason = "waiting_for_ground_truth"
+        self.lifecycle_reason = "waiting_for_ground_truth" if self.ground_truth_enabled else "waiting_for_imu"
         self.command_endpoint = (args.command_host, args.command_port)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind((args.host, args.port))
@@ -390,20 +399,24 @@ class KerbalLidarUdpBridge(Node):
         self.vessel_lifecycle_publisher = self.create_publisher(
             VesselLifecycle, args.vessel_lifecycle_topic, model_qos
         )
-        self.ground_truth_pose_publisher = self.create_publisher(
+        truth_publisher = self.create_publisher if self.ground_truth_enabled else lambda *a: None
+        self.ground_truth_pose_publisher = truth_publisher(
             PoseStamped, f"{ground_truth_prefix}/pose", state_qos
         )
-        self.nearby_vessels_publisher = self.create_publisher(
+        self.nearby_vessels_publisher = truth_publisher(
             NearbyVessels, f"{ground_truth_prefix}/nearby_vessels", state_qos
         )
-        self.ground_truth_twist_publisher = self.create_publisher(
+        self.ground_truth_twist_publisher = truth_publisher(
             TwistStamped, f"{ground_truth_prefix}/twist", state_qos
         )
-        self.ground_truth_body_twist_publisher = self.create_publisher(
+        self.ground_truth_body_twist_publisher = truth_publisher(
             TwistStamped, f"{ground_truth_prefix}/twist_body", state_qos
         )
-        self.ground_truth_acceleration_publisher = self.create_publisher(
+        self.ground_truth_acceleration_publisher = truth_publisher(
             AccelStamped, f"{ground_truth_prefix}/acceleration", state_qos
+        )
+        self.ground_truth_frame_rate_publisher = truth_publisher(
+            Vector3Stamped, f"{ground_truth_prefix}/frame_angular_velocity", state_qos
         )
         self.imu_publisher = self.create_publisher(
             Imu, f"{self.topic_prefix}/imu/data_raw", state_qos
@@ -495,6 +508,23 @@ class KerbalLidarUdpBridge(Node):
         except ValueError as exc:
             self.get_logger().warning(f"Dropped invalid IMU packet: {exc}")
             return
+        previous = getattr(self, 'last_imu_identity_time', None)
+        time_reset = previous is not None and previous[0] == state.vessel_id and state.universal_time < previous[1]
+        if previous is not None and (previous[0] != state.vessel_id or time_reset):
+            self.simulation_clock.reset()
+        self.last_imu_identity_time = (state.vessel_id, state.universal_time)
+        if not getattr(self, 'ground_truth_enabled', True):
+            changed = self.active_vessel_id != state.vessel_id
+            if changed or time_reset or self.lifecycle_state == VesselLifecycle.STATE_STALE:
+                self.vessel_generation += 1
+            if self.active_model is not None and self.active_model.vessel_id != state.vessel_id:
+                self.clear_active_model('IMU active vessel changed')
+            self.active_vessel_id = state.vessel_id
+            self.active_vessel_name = ''
+            self.latest_imu_seen_at = time.monotonic()
+            self.lifecycle_state = VesselLifecycle.STATE_ACTIVE
+            self.lifecycle_reason = 'imu_active'
+            self.publish_vessel_lifecycle()
         message = Imu()
         message.header.stamp = self.stamp_for_packet(packet)
         message.header.frame_id = "base_link"
@@ -763,7 +793,8 @@ class KerbalLidarUdpBridge(Node):
             self.clear_active_model("active-vessel runtime proxy expired")
             return
 
-        stamp = self.get_clock().now().to_msg()
+        sample = getattr(self, 'last_imu_identity_time', None)
+        stamp = self.stamp_for_universal_time(sample[1]) if sample is not None else self.get_clock().now().to_msg()
         root_transform = TransformStamped()
         root_transform.header.stamp = stamp
         root_transform.header.frame_id = "base_link"
@@ -858,13 +889,14 @@ class KerbalLidarUdpBridge(Node):
     def remove_stale_publishers(self) -> None:
         self.camera_assembler.expire()
         now = time.monotonic()
+        seen_at = self.latest_ground_truth_seen_at if self.ground_truth_enabled else self.latest_imu_seen_at
         if (
-            self.latest_ground_truth_seen_at > 0.0
-            and now - self.latest_ground_truth_seen_at > self.args.topic_timeout_sec
+            seen_at > 0.0
+            and now - seen_at > self.args.topic_timeout_sec
             and self.lifecycle_state != VesselLifecycle.STATE_STALE
         ):
             self.lifecycle_state = VesselLifecycle.STATE_STALE
-            self.lifecycle_reason = "ground_truth_timeout"
+            self.lifecycle_reason = "ground_truth_timeout" if self.ground_truth_enabled else "imu_timeout"
             self.publish_vessel_lifecycle(reason=self.lifecycle_reason)
         for topic in expired_topic_names(
             self.lidar_last_seen, now, self.args.topic_timeout_sec
@@ -1144,6 +1176,8 @@ class KerbalLidarUdpBridge(Node):
         return RosTime(nanoseconds=nanoseconds, clock_type=self.get_clock().clock_type).to_msg()
 
     def publish_ground_truth_transform_at(self, universal_time: float, stamp: Any) -> None:
+        if not getattr(self, 'ground_truth_enabled', True):
+            return
         state = self.latest_ground_truth
         if state is None or not math.isfinite(universal_time):
             return
@@ -1198,15 +1232,15 @@ class KerbalLidarUdpBridge(Node):
         )
         message = VesselLifecycle()
         message.header.stamp = self.get_clock().now().to_msg()
-        message.header.frame_id = "ground_truth_enu"
+        message.header.frame_id = "ground_truth_enu" if self.ground_truth_enabled else ""
         message.state = self.lifecycle_state
         message.vessel_id = self.active_vessel_id
         message.vessel_name = self.active_vessel_name
         message.generation = self.vessel_generation
         message.origin_sequence = (
             0 if self.latest_ground_truth is None else self.latest_ground_truth.origin_sequence
-        )
-        message.world_frame = "ground_truth_enu"
+        ) if self.ground_truth_enabled else self.vessel_generation
+        message.world_frame = "ground_truth_enu" if self.ground_truth_enabled else ""
         message.body_frame = "base_link"
         message.model_ready = active_model_ready if model_ready is None else model_ready
         message.model_id = (
@@ -1216,6 +1250,8 @@ class KerbalLidarUdpBridge(Node):
         self.vessel_lifecycle_publisher.publish(message)
 
     def publish_nearby_vessels(self, packet: Dict[str, Any]) -> None:
+        if not getattr(self, 'ground_truth_enabled', True):
+            return
         try:
             state = nearby_vessels_from_packet(packet)
         except ValueError as exc:
@@ -1243,6 +1279,8 @@ class KerbalLidarUdpBridge(Node):
         self.nearby_vessels_publisher.publish(message)
 
     def publish_ground_truth(self, packet: Dict[str, Any]) -> None:
+        if not getattr(self, 'ground_truth_enabled', True):
+            return
         try:
             state = ground_truth_from_packet(packet)
         except ValueError as exc:
@@ -1278,6 +1316,10 @@ class KerbalLidarUdpBridge(Node):
             pose.pose.orientation.w,
         ) = state.rotation
         self.ground_truth_pose_publisher.publish(pose)
+        if state.frame_angular_velocity is not None:
+            frame_rate = Vector3Stamped(header=pose.header)
+            frame_rate.vector.x, frame_rate.vector.y, frame_rate.vector.z = state.frame_angular_velocity
+            self.ground_truth_frame_rate_publisher.publish(frame_rate)
 
         twist = TwistStamped()
         twist.header.stamp = stamp

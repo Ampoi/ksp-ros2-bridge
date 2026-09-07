@@ -48,6 +48,7 @@ class GroundTruthData:
     angular_velocity_body: Optional[Vector3]
     linear_acceleration: Vector3
     angular_acceleration: Vector3
+    frame_angular_velocity: Optional[Vector3] = None
 
 
 @dataclass(frozen=True)
@@ -122,6 +123,7 @@ def ground_truth_from_packet(packet: Mapping[str, Any]) -> GroundTruthData:
         ),
         linear_acceleration=_vector(packet, "linearAcceleration", 3),  # type: ignore[arg-type]
         angular_acceleration=_vector(packet, "angularAcceleration", 3),  # type: ignore[arg-type]
+        frame_angular_velocity=_optional_vector(packet, "frameAngularVelocity", 3),
     )
 
 

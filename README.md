@@ -73,7 +73,7 @@ KSP本体のManaged DLLを参照してビルドします。KSPのインストー
 - `rangeProfile`: 3D LiDARの`near` / `medium` / `long`距離・精度プロファイル
 - `nearRangeMeters`: 近距離プロファイルの最大距離（10〜30 m、160 rays/sr）
 - `mediumRangeMeters`: 中距離プロファイルの最大距離（50〜150 m、320 rays/sr）
-- `longRangeMeters`: 長距離プロファイルの最大距離（150〜250 m、512 rays/sr）
+- `longRangeMeters`: 長距離プロファイルの最大距離（150〜250 m、1024 rays/sr）
 - `udpHost`: UDP送信先
 - `udpPort`: UDP送信先ポート
 - `activeVesselUrdfEnabled`: Flight中の操作機体プロキシURDFを送信
@@ -91,7 +91,7 @@ KSP本体のManaged DLLを参照してビルドします。KSPのインストー
 
 3D LiDARは初期設定で取付ノード法線をモデル正面として使い、その方向側の半球を走査します。手動で軸を指定する場合は`align3DToAttachNormal = false`にし、CFG内の`forwardAxis`と`upAxis`を`+X`、`-X`、`+Y`、`-Y`、`+Z`、`-Z`のいずれかへ変更してください。2D LiDARは従来どおり`forwardAxis`と`upAxis`を使用します。
 
-3D LiDARではPart Action Windowの`3D Range: Near`、`Medium`、`Long`から距離プロファイルを選べます。選択中のプロファイルだけ距離スライダーが表示され、指定範囲内で最大距離を調整できます。遠距離ほど半球密度を上げ、Nearは約1005 ray、Mediumは約2011 ray、Longは約3217 rayです。3D方向配列はUDPへ重複送信せず、bridgeが既知のFibonacci配置から復元するため、Longでも60 KBのデータグラム上限内に収まります。
+3D LiDARではPart Action Windowの`3D Range: Near`、`Medium`、`Long`から距離プロファイルを選べます。選択中のプロファイルだけ距離スライダーが表示され、指定範囲内で最大距離を調整できます。遠距離ほど半球密度を上げ、Nearは約1005 ray、Mediumは約2011 ray、Longは既定の`maxLaserCount`上限で4096 rayです。3D方向配列はUDPへ重複送信せず、bridgeが既知のFibonacci配置から復元するため、Longでも60 KBのデータグラム上限内に収まります。
 
 ## レーザープレビュー
 
@@ -217,7 +217,7 @@ Ground Truthは操作機体を選択した地点を原点とする東・北・�
 
 `Ros2/ksp_nav2_bringup`はbridgeと分離したROS2 integration packageです。2D `LaserScan`だけからscan-to-scan ICP odometryを作り、SLAM Toolbox / AMCL / Nav2へ接続します。planar controllerは`cmd_vel`が有効な間だけauthority leaseを取得し、停止後に解放します。起動方法と制約は[2D LiDAR MappingとNav2](docs/guide/nav2.md)を参照してください。
 
-実機体を使って上から実行できる手順は、[`test A`デブリ周回](Demo/debris_orbit/README.md#実機の準備と起動)と[`rober A` SLAM + Nav2](Ros2/ksp_nav2_bringup/README.md#rober-aで上から順に実行する手順)に分けています。デブリ周回は位置推定とRCS制御を分離し、真値の相対位置から始めて3D LiDAR推定へ切り替えられます。RVizで対象点群・視線・相対軌跡を表示します。`Development/commands`のKSP準備commandは再現試験専用で、runtime source/APIとは分離されています。
+実機体を使って上から実行できる手順は、[`test A`デブリ周回](Demo/debris_orbit/README.md#実機の準備と起動)と[`rober A` SLAM + Nav2](Ros2/ksp_nav2_bringup/README.md#rober-aで上から順に実行する手順)に分けています。デブリ周回は位置推定とRCS制御を分離し、3D LiDAR＋IMUで真値を使わずに周回し、36度ごとに機体カメラで撮影します。RVizで対象点群・視線・相対軌跡を表示します。`Development/commands`のKSP準備commandは再現試験専用で、runtime source/APIとは分離されています。
 
 ## ROS2モーター
 

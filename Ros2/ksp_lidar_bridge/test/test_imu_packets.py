@@ -46,6 +46,7 @@ class ImuPacketTests(unittest.TestCase):
             imu_publisher=SimpleNamespace(publish=lambda m: published.append(copy.deepcopy(m))),
             stamp_for_packet=lambda p: Time(sec=123, nanosec=500000000),
             get_logger=lambda: SimpleNamespace(warning=warnings.append),
+            simulation_clock=SimpleNamespace(reset=lambda: None),
         )
         data = packet()
         KerbalLidarUdpBridge.publish_imu(node, data)

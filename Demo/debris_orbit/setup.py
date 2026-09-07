@@ -21,7 +21,7 @@ setup(
     zip_safe=True,
     maintainer="Kerbal LiDAR Lab",
     maintainer_email="user@example.com",
-    description="LiDAR-guided debris orbit and 30-degree image capture demo for KSP ROS2.",
+    description="LiDAR/IMU debris orbit without Ground Truth and 36-degree image capture demo for KSP ROS2.",
     license="MIT",
     entry_points={
         "console_scripts": [

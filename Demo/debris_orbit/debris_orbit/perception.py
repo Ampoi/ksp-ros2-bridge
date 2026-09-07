@@ -51,7 +51,7 @@ class RelativeTracker:
         self.stamp = None
         self.observations = 0
 
-    def update(self, candidates, stamp, initial_index=0):
+    def update(self, candidates, stamp, initial_index=0, input_delta=None):
         candidates = np.asarray(candidates, dtype=float).reshape(-1, 3)
         if not len(candidates) or not np.isfinite(candidates).all() or not np.isfinite(stamp):
             return None
@@ -70,6 +70,9 @@ class RelativeTracker:
             transition = np.eye(6); transition[:3, 3:] = np.eye(3) * dt
             noise_map = np.vstack([np.eye(3) * dt**2 / 2, np.eye(3) * dt])
             prediction = transition @ self.state
+            if input_delta is not None:
+                prediction[:3] += input_delta[0]
+                prediction[3:] += input_delta[1]
             covariance = transition @ self.covariance @ transition.T + noise_map @ noise_map.T * self.acceleration_sigma**2
             distances = np.linalg.norm(candidates - prediction[:3], axis=1)
             index = int(np.argmin(distances))

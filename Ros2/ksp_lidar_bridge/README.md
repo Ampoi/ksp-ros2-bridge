@@ -4,7 +4,11 @@ KerbalLiDARのUDP JSONを受け取り、LiDAR、RGBカメラ、ロボティク�
 
 kRPCは使用しません。このbridgeはKerbalLiDAR KSPプラグインと直接UDP通信し、kRPCサーバーやPythonの`krpc`パッケージには依存しません。
 
-- Default vessel IMU: `/ksp_vessel/imu/data_raw` (`sensor_msgs/msg/Imu`, 3軸角速度rad/s・比力m/s²、`base_link`、最大30 Hz)。全機体で追加パーツ不要。操作中の機体に自動追従し、姿勢なし（`orientation_covariance[0]=-1`）。静止時は上向き約+g、自由落下時は約0。
+- Default vessel IMU: `/ksp_vessel/imu/data_raw` (`sensor_msgs/msg/Imu`, 3軸角速度rad/s・比力m/s²、`base_link`、最大30 Hz)。全機体で追加パーツ不要。操作中の機体に自動追従し、姿勢なし（`orientation_covariance[0]=-1`）。静止時は上向き約+g、自由落下時は約0。角速度は慣性系基準で、KSPの回転物理座標系では惑星の自転を含めます。
+
+`--disable-ground-truth`を付けると、真値パケットを破棄し、真値Topicと`ground_truth_enu -> base_link`を配信しません。この場合の機体IDとlifecycleはIMUパケットから生成し、`origin_sequence`はセンサー機体の世代です。LiDAR＋IMUだけで動く[デブリ周回デモ](../../Demo/debris_orbit/README.md)の検証に使用します。
+
+センサーtimestampは初回のKSP universal timeとROS時計のoffsetを固定して対応付けます。遅延した画像や物理時間の進みの遅さでoffsetを変更するとジャイロ積分に架空の時間差が入るため、飛行中は補正しません。IMUで機体切替や時刻の巻き戻りを検知した際に初期化します。受信timeoutは別途wall timeで判定します。
 - 2D LiDAR: `sensor_msgs/msg/LaserScan`
 - 3D LiDAR: `sensor_msgs/msg/PointCloud2`
 - 2D Topic: `/ksp_vessel/lidar_2d/<sensor_id>/scan`
@@ -158,3 +162,5 @@ ROS2を読み込まずにパケット変換ロジックをテストできます�
 ```bash
 python3 -m unittest discover -s test -v
 ```
+
+真値比較用`/ksp_vessel/ground_truth/frame_angular_velocity`は惑星固定ENU軸の回転率です。IMU周回の評価器はこれを使って真値を慣性系へ移し、推定姿勢と比較します。推定器・制御器では使いません。

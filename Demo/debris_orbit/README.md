@@ -1,154 +1,115 @@
-# debris_orbit デモ
+# debris_orbit: LiDAR＋IMU周回デモ
 
-デブリに3D LiDARを向けたままRCSで周回するROS 2 Jazzyデモです。位置推定と移動制御を分離しており、既定は**真値による相対位置**で制御します。同じ制御へLiDAR推定を接続できます。
+3D LiDARと6軸IMUだけでデブリへの相対位置・相対速度・姿勢変化を推定し、LiDARを向けながらRCSで周回します。**推定器・誘導器・制御器のすべてでGround Truthを購読しません。** 機体カメラで36度ごとに撮影し、次の周回も撮影を続けます。
 
 ```text
-位置推定パート                          移動制御パート
-truth: 自機・デブリの同時刻の絶対位置 ─┐
-                                     ├─ RelativeTarget ─ 周回誘導 ─ ControlSetpoint
-lidar: 3D点群 → SciPyクラスタ → 追跡 ─┘                         ↓
-                                                   ksp_vehicle_control
-                                                     lease → Body Wrench → RCS
+3D点群 ─ SciPyクラスタリング ─┐
+                              ├─ 相対運動Kalman filter ─ RelativeTarget ─ 周回誘導
+IMU ─ ジャイロ積分・比力予測 ─┘               │                         │
+                                         推定Pose/Twist ─ 共通制御器 ─ RCS
+                                                                    │
+                                   機体カメラ ─ 36度ごとにPNG＋計測JSON
 ```
 
-`debris_target_estimator`は位置推定だけを担当し、制御指令を出しません。`debris_orbit`は点群を購読せず、共通の相対位置・相対速度から目標位置・姿勢・速度を作ります。`debris_orbit_controller`は既存の`ksp_vehicle_control`を使う共通制御器です。
+`debris_target_estimator`が推定、`debris_orbit`が周回誘導・撮影、`ksp_vehicle_control`がlease付きのBody Wrenchを担当します。制御器の入力には、このデモの推定Pose/Twistを明示的に接続します。旧`target_source:=truth`/`lidar`は廃止し、`lidar_imu`が唯一の入力方式です。
 
 ## 実機の準備と起動
 
-1. 機体に全6軸を制御できるRCS、3D LiDAR、必要ならRGBカメラを搭載します。
-2. Sensor IDをLiDARは`front_lidar`、カメラは`orbit_camera`にします。LiDARの取付位置と姿勢はTFから取得します。カメラも正対させるなら光軸をLiDARと揃えます。
-3. 分離後の対象がLiDARの250 m範囲内にある状態で実行します。画像保存はカメラなしでも周回制御を妨げません。
+全6軸を操作できるRCS、3D LiDAR（Sensor ID `front_lidar`）、LiDARと同方向を向くカメラ（`orbit_camera`）を搭載します。センサー取付位置・姿勢は、機体内のTFから取得します。
 
-以下は`ROS2 debug`の`test A`を使う手順です。`dev_debug.sh`は元のセーブを保持し、隔離デバッグセーブを作ります。
+`ROS2 debug`の`test A`を使う場合:
 
 ```bash
-# リポジトリ直下
 ./dev_sync.sh
 ./Development/commands/dev_debug.sh \
-  --save "ROS2 debug" --vessel "test A" --launch-craft \
+  --save 'ROS2 debug' --vessel 'test A' --launch-craft \
   --lidar-profile long --no-teleport --keep-session
 ```
 
-Flightが開いたら別ターミナルでbridgeを起動します。Mod変更後はKSPを再起動してください。
+Flightが開いたら別ターミナルでbridgeを起動します。`--disable-ground-truth`は真値パケットを破棄し、真値Topicとworld TFを配信しません。機体ID・lifecycleもIMUパケットから取得します。
 
 ```bash
 source /opt/ros/jazzy/setup.bash
 source ~/ros2_ws/install/setup.bash
-ros2 run ksp_lidar_bridge udp_bridge --host 127.0.0.1 --port 49010
+ros2 run ksp_lidar_bridge udp_bridge \
+  --host 127.0.0.1 --port 49010 --disable-ground-truth
 ```
 
-さらに別ターミナルで低軌道へ移し、真値モードを起動します。
+別ターミナルから軌道投入・分離し、すぐにデモを起動します。`dev_teleport.sh`はKSPの軌道投入応答後に10秒待ち、packing/unpacking直後の分離を避けます。準備用のteleportは飛行開始位置を用意する開発コマンドで、推定・制御へ状態を渡しません。
 
 ```bash
 ./Development/commands/dev_teleport.sh lko
+./Development/commands/dev_separate.sh
 source /opt/ros/jazzy/setup.bash
 source ~/ros2_ws/install/setup.bash
 ros2 launch debris_orbit debris_orbit.launch.py \
-  target_source:=truth enabled:=true demo_instance_id:=test_a_run rviz:=true
+  enabled:=true demo_instance_id:=test_a_imu rviz:=true
 ```
 
-対象がない間は`waiting_for_truth_target`で待ちます。別ターミナルから分離します。
+未発見時はIMUで姿勢を追跡しつつ後方まで探索します。点群から3回続けて対象を取得したら指向・接近を開始し、半径15 mへ到達後に周回します。大きな姿勢誤差がある間は相対速度を制動します。`Ctrl-C`で制御指令をゼロにしてleaseを解放します。
 
-```bash
-./Development/commands/dev_separate.sh
-```
+推定だけを表示するには`controller_enabled:=false`を指定し、`enabled:=true`を付けずに起動します。独自推定器をつなぐ場合は`estimator_enabled:=false`とし、同じtarget・navigation Topicを配信します。
 
-真値モードは、同一時刻・同一原点の絶対位置／速度を引き算し、最も近いデブリを初回に選択してそのvessel IDへ固定します。対象が消えても別の物体へ勝手に乗り換えません。指定したい場合は`target_vessel_id:=<vessel_id>`を追加します。候補一覧は次で確認できます。
+## 座標系と推定の範囲
 
-```bash
-ros2 topic echo /ksp_vessel/ground_truth/nearby_vessels --once
-```
+IMUには絶対姿勢がありません。初回の機体姿勢を単位quaternionとし、SciPyのRotationでbody角速度を積分します。`debris_inertial_<demo_instance_id>`の軸はこの初期姿勢に固定され、ENUや惑星の絶対座標とは一致しません。
 
-`demo_instance_id`は状態・画像の名前空間です。操作するKSP機体はlifecycleのactive vesselで決まります。
+LiDARの観測面の包囲箱中心を、取付TFとIMU姿勢でこの座標系へ変換します。NumPyで間引き、[SciPy cKDTree](https://docs.scipy.org/doc/scipy/reference/generated/scipy.spatial.cKDTree.html)と疎行列の連結成分でクラスタを抽出します。比力を積分してスキャン間の相対運動を予測し、点群観測で位置・速度を補正します。
 
-## LiDAR推定への切替
+近距離で共に自由落下する、推力を出していない対象を仮定します。自機の比力は対象−自機の相対加速度に負符号で入り、共通の重力加速度を足す必要はありません。重力勾配や対象自身の加速度はモデル誤差として残ります。地上用の重力方向推定を自由落下中へ流用していません。
 
-真値モードのターミナルで`Ctrl-C`を押して止め、デブリをLiDAR正面に捉えている間に次を起動します。
+制御用の原点は推定した対象中心です。自機位置は`−relative_position`、自機速度は`−relative_velocity`です。絶対位置・絶対速度・絶対方位は求めません。見える表面の中心と実際の重心には偏差があり、6軸IMUのジャイロバイアスによる長時間の方位ドリフトも完全には観測できません。現在のModはIMUに人工ノイズ・バイアスを加えていません。
 
-```bash
-ros2 launch debris_orbit debris_orbit.launch.py \
-  target_source:=lidar enabled:=true demo_instance_id:=test_a_lidar rviz:=true
-```
+0.5秒を超えるIMUサンプルの欠落では`imu_restart_required`となり、古い状態での制御を止めます。この場合はlaunch全体を再起動して基準座標系を揃えます。機体切替・lifecycle更新でも推定をリセットします。
 
-推定だけを検証する場合は、制御器を起動しません。
+## 36度ごとの撮影
 
-```bash
-ros2 launch debris_orbit debris_orbit.launch.py \
-  target_source:=lidar controller_enabled:=false rviz:=true
-```
+周回開始位置を0度として、**0、36、72、…、324、360、396、…度**で搭載カメラの画像を保存します。`stop_after_capture: false`が既定なので2周目以降も続きます。
 
-LiDARモードは`nearby_vessels`を購読しません。NumPyによる間引き、[SciPy cKDTree](https://docs.scipy.org/doc/scipy/reference/generated/scipy.spatial.cKDTree.html)による近傍検索、SciPyの疎行列連結成分によるクラスタリングを使います。前方35度以内の点から大きすぎる面を除き、初回は最大クラスタ、その後は予測位置に近いクラスタを選択します。観測表面の包囲箱中心を6状態のKalman filterで追跡し、相対位置と相対速度を配信します。
+保存先は`debris_orbit_captures/<demo_instance_id>/<起動日時>/`です。画像名に角度と連番を付けるため、次周の同じ角度や再起動で上書きしません。PNGごとのJSONに、画像timestamp・カメラframe・指定角度・画像取得時点の推定周回角を記録します。
 
-推定に使う自機情報は姿勢・角速度とLiDAR取付TFです。**デブリの位置・速度の真値は推定に使いません。** 現在の姿勢基準と共通制御器の自機状態にはGround Truthを使用します。LiDARだけによる全6DoF自己位置推定・SLAMではありません。別デモ`position_estimator`は静止環境のscan-to-scan ICP用で、動くデブリの中心推定とは役割が異なります。
+画像timestampを推定角の履歴へ照合し、指定角度を通過した後、既定2度以内のフレームを保存します。カメラ遅延や未配信で間に合わない場合は`capture_missed`を報告し、古い画像で埋めません。カメラのフレーム周期による角度誤差はJSONで確認できます。
 
-見えている表面の中心と実際の重心には差があります。`target_center_offset`で視線奥への補正を設定できますが、対象形状・見える面・点群密度に依存するため、一定補正で重心が正確に求まるわけではありません。ほぼ対称な物体の姿勢や見えない形状も復元しません。
+## RVizと設定
 
-## RViz表示
+`rviz:=true`で点群、選択クラスタ、対象中心、自機、視線、目標半径と軌跡を表示します。表示用の`debris_view_<demo_instance_id>`は推定対象中心が原点です。軌跡は2 Hzで最大30分保持します。
 
-`rviz:=true`で付属設定を読み込み、Fixed Frameを`debris_view_<demo_instance_id>`へ自動設定します。真値モードでも相対位置と軌跡を表示できます。
+設定は[`config/debris_orbit.yaml`](config/debris_orbit.yaml)。主なlaunch引数は`orbit_radius`、`demo_instance_id`、`lidar_sensor_id`、`camera_sensor_id`、`lidar_frame`、`config_file`です。YAMLには`imu_topic`、`imu_max_gap_sec`、点群フィルタと追跡雑音、RCSゲイン、撮影間隔・許容角があります。
 
-- 水色の点: 選択したデブリのクラスタ。灰色の点: LiDARの観測点。
-- 水色の球: 推定対象中心。オレンジの球・線: 自機位置と相対軌跡。
-- 灰色の円: 目標周回半径。直線: 対象への視線。
+Topicルートは`/ksp_vessel/demos/debris_orbit/<demo_instance_id>`:
 
-表示は推定した対象中心を原点とする独立した座標系です。点群・機体・軌跡を同じ座標系へ移しているため、低軌道の大きな絶対座標に流されず観察できます。`ground_truth_enu -> base_link`とはTFを競合させません。
-
-## 制御動作
-
-既定半径15 m、角速度1 deg/s。まずLiDARを対象へ向けて円周へ接近し、到達後は現在の実測方位から円周方向の速度を与えます。時間だけで先へ進む軌道ではないので、接近や指向の遅れで目標が先走りません。近接・周回ともLiDAR光軸を制御し、視線変化の角速度も先行指令します。
-
-- 指向誤差が8度を超える間は円周運動を保留し、相対速度を減速させます。
-- 接近位置ステップは2 mに制限し、遠方への大きな指令による行き過ぎを抑えます。
-- 相対位置のみを自機状態の時刻まで予測します。制御器もsetpointを自機poseの時刻へ整合し、公転速度×通信遅延による偽の位置誤差を防ぎます。
-- 過大な角速度では`detumbling`へ移ります。入力喪失、原点変更、機体変更は追跡と軌道をリセットします。取付TFがない間はIDLEです。
-- 対象を失ったLiDARモードは最後の視線を中心に往復探索します。観測が継続して3回届くまで周回を再開しません。
-- 0, 30, …, 330度の画像を12枚保存し、既定では撮影後も周回を続けます。`stop_after_capture: true`なら撮影が揃い、実測角が360度へ達した後に停止します。
-
-`Ctrl-C`で停止すると共通制御器がゼロWrenchを送りleaseを解放します。KSP側の角速度・指令timeout・連続噴射の制限も有効です。
-
-## 設定とインターフェース
-
-[`config/debris_orbit.yaml`](config/debris_orbit.yaml)の`debris_target_estimator`が位置推定、`debris_orbit`が誘導、`debris_orbit_controller`が共通制御の設定です。独自YAMLは`config_file:=/absolute/path/config.yaml`で指定します。
-
-| 設定 | 用途 |
+| Topic末尾 | 内容 |
 |---|---|
-| `target_source:=truth\|lidar` | 位置推定を切替 |
-| `target_vessel_id` | 真値モードの対象固定。空なら最寄りデブリ |
-| `orbit_radius:=15.0` | 誘導とRViz両方の半径を上書き |
-| `lidar_sensor_id`, `camera_sensor_id` | KSP上のSensor ID |
-| `lidar_frame` | 誘導用の取付TF名。bridgeのframe-prefix変更時に指定 |
-| `target_topic` | 推定・誘導の共通入力Topic |
-| `estimator_enabled:=false` | 外部のRelativeTarget publisherに接続 |
-| `controller_enabled:=false` | 認識・誘導だけを起動 |
-| `max_off_axis_deg`, `max_cluster_extent` | LiDAR候補の前方角度・最大対角長[m] |
-| `measurement_sigma`, `acceleration_sigma` | 相対追跡filterの観測・加速度雑音 |
-| `arrival_*_tolerance` | 周回開始の位置・相対速度・姿勢許容値 |
-
-共通Topicルートは`/ksp_vessel/demos/debris_orbit/<demo_instance_id>`です。
-
-| Topic末尾 | 型・意味 |
-|---|---|
-| `target` | `RelativeTarget`: デブリ−自機の位置[m]・速度[m/s]、world軸表現 |
-| `setpoint` | `ControlSetpoint`: 共通制御器への目標 |
+| `target` | `RelativeTarget`: 対象−自機の相対位置・速度、初期IMU姿勢に固定した軸 |
+| `navigation/pose` | 対象基準の自機位置とIMU姿勢 |
+| `navigation/twist` | 同座標系での自機相対速度と角速度 |
+| `navigation/twist_body` | body軸での推定速度とIMU角速度 |
+| `setpoint` | 共通制御器への位置・姿勢・速度目標 |
 | `status`, `estimator_status`, `controller_status` | JSON状態 |
-| `points`, `target_points` | RViz用PointCloud2（LiDARモード） |
-| `markers`, `path` | RViz用MarkerArray、Path |
+| `points`, `target_points`, `markers`, `path` | RViz表示 |
 
-`RelativeTarget.header.stamp`は観測時刻、`header.frame_id`は`ground_truth_enu`です。位置の原点は自機ですが、軸は回転する`base_link`ではなくworld軸です。`observer_vessel_id`と`origin_sequence`がlifecycleと一致する必要があります。両sourceを同じTopicへ同時に配信しないでください。
-
-真値入力`/ksp_vessel/ground_truth/nearby_vessels`は、同じ天体のロード済み・unpacked・2500 m以内の他機体を最大32件配信します。デモ側は既定で250 m以内に絞ります。
+センサー時刻はKSP universal timeに一定offsetを加えた連続時刻です。遅れた画像やゲームの処理速度に合わせて飛行中にoffsetを飛ばすことはありません。nodeの受信鮮度判定には別途ROS時計を使います。
 
 ## 実機記録とテスト
 
-実際のKSPで真値モード、続いてLiDARモードを操作・計測した結果は[実機試験記録](../../Development/evidence/debris_orbit/README.md)に保存しています。
+[LiDAR＋IMUだけで制御したKSP実機の試験記録](../../Development/evidence/debris_orbit_imu/README.md)に、真値比較グラフ、実際のRViz・KSP画面、36度ごとの写真をまとめています。
 
-評価用ノードは制御・推定と独立し、真値との差、実測周回角、真のデブリへの光軸誤差を保存します。対象候補が複数なら`--target-id`も指定してください。
+```bash
+python3 Development/tools/record_sensor_orbit.py \
+  --instance test_a_imu --output /tmp/imu_orbit_trial --degrees 400
+```
+
+真値と比較してデバッグする場合はbridgeから`--disable-ground-truth`を外し、次の評価器を使います。推定器・誘導器・制御器の接続は変更しません。
 
 ```bash
 python3 Development/tools/record_debris_orbit.py \
-  --instance test_a_lidar --output /tmp/debris_trial --stop-after-turns 1
-python3 Development/tools/plot_debris_orbit.py /tmp/debris_trial
+  --instance test_a_imu --imu-navigation \
+  --output /tmp/imu_orbit_evaluation --stop-after-turns 1.12
 ```
+
+評価器内で初期IMU座標系と真値の座標系を一度だけ回転整列し、時刻を合わせて相対位置・速度・姿勢・実際のLiDAR光軸を比較します。真値ENU軸は惑星と一緒に回るため、評価専用`ground_truth/frame_angular_velocity`でその回転と相対速度の輸送項も補正します。この整列や補正はTFや制御Topicへ一切配信しません。
+
+最初の`record_sensor_orbit.py`記録器は真値を購読しません。記録する角度・距離・指向誤差は推定座標系での値です。[旧真値併用版の試験記録](../../Development/evidence/debris_orbit/README.md)と区別してください。
 
 ```bash
 source /opt/ros/jazzy/setup.bash
@@ -157,4 +118,4 @@ PYTHONPATH="Demo/debris_orbit:Ros2/ksp_vehicle_control:Ros2/ksp_lidar_bridge:$PY
   /usr/bin/python3 -m unittest discover -s Demo/debris_orbit/test -v
 ```
 
-ROS callbackテストは独立したROS_DOMAIN_ID 173で動き、試験中のKSPへ指令を送りません。
+ROS結合テストは独立したdomainで動作し、試験中のKSPへ指令を送りません。

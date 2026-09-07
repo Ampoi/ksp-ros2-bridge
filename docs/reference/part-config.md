@@ -38,7 +38,7 @@
 | `nearRangeMeters` | 30 | 10〜30 m |
 | `mediumRangeMeters` | 100 | 50〜150 m |
 | `longRangeMeters` | 250 | 150〜250 m |
-| `hemisphereDensity` | profile選択時に160 / 320 / 512 | 1〜1024 rays/sr |
+| `hemisphereDensity` | profile選択時に160 / 320 / 1024 | 1〜1024 rays/sr |
 
 ## Active vessel URDF
 
