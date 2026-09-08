@@ -25,7 +25,7 @@ PyLoNを初めて使うための導入手順です。**Ubuntu 24.04の同じPC�
 
 この手順はKSP 1.x向けです。KSP 2には対応しません。最初の動作確認にはKSPのSandboxセーブを使うと、パーツの研究・購入を省けます。Steam版ならライブラリからKSPをインストールし、通常起動できることを確認して、いったん終了してください。
 
-PyLoN本体にはkRPC、Nav2、SciPy、RVizは不要です。RVizやデモは受信確認の後に追加できます。Node.jsとpnpmはドキュメントを編集するときだけ使用します。
+RVizでの可視化やデモの実行環境は、受信確認の後に追加できます。
 
 ### Ubuntuの基本ツールと.NET SDK
 
@@ -332,14 +332,6 @@ ros2 run pylon_bridge udp_bridge \
 
 更新時はKSPを終了し、`./sync.sh`を再実行してからKSPとbridgeを再起動します。デモも更新する場合は同じ`--demo`指定か`--all-demos`を付けます。詳しくは[トラブルシュート](../reference/troubleshooting.md)、設定項目は[bridge起動オプション](../reference/bridge-options.md)を参照してください。
 
-## ドキュメント自体を編集する場合
+## 次のステップ
 
-Node.jsとpnpmを用意したうえで、リポジトリのルートから実行します。MODやROS2の利用には不要です。
-
-```bash
-cd docs
-pnpm install --frozen-lockfile
-pnpm run docs:dev
-```
-
-`pnpm run docs:build`で静的サイトを生成し、`pnpm run docs:preview`で確認できます。VercelのRoot DirectoryとCLIの作業ディレクトリは`docs`です。
+[ROS2アプリケーションを作る](application-development.md)へ進み、受信したデータを自分のノードで利用してください。メッセージ型とTopicの一覧は[APIリファレンス](../api/topics.md)を参照できます。

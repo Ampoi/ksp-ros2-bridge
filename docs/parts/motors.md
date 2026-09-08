@@ -101,18 +101,9 @@ ros2 topic pub --once /ksp_vessel/actuators/servo/command \
 
 ## 機体内の衝突判定
 
-モーター本体と`top`ノードに接続された駆動側パーツは、飛行中も互いのコライダーが有効です。既存の機体ファイルでKSPの`sameVesselCollision`が無効として保存されていても、ジョイント初期化時に両パーツへ適用されます。
+モーター本体と`top`ノードに接続された駆動側パーツは、飛行中も互いに衝突します。
 
-リニアアクチュエーターでは、動く筒・ロッドと駆動側パーツ群の間だけ接触を除外します。可動モデルのコライダーは固定側の剛体に属するため、そのままでは縮む先端を押し返して速度が落ちるためです。固定筒・周囲との接触と、LiDAR等のレイキャスト用の形状は維持します。
-
-## 実装確認先
-
-- `GameData/PyLoN/Parts/RosServo/part.cfg`
-- `GameData/PyLoN/Parts/RosLinearMotor/part.cfg`
-- `Source/PyLoN/Api/Ksp/PyLoNMotorSupport.cs`
-- `Ros2/pylon_bridge/pylon_bridge/motor_packets.py`
-- `Ros2/pylon_interfaces/msg/MotorCommand.msg`
-- `Ros2/pylon_interfaces/msg/MotorState.msg`
+リニアアクチュエーターでは、動く筒・ロッドと駆動側パーツ群の間だけ接触を除外します。固定筒・周囲との接触と、LiDAR等のレイキャスト用の形状は維持します。
 
 ## 可動フィンの個別角度制御
 

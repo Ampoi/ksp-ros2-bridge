@@ -2,8 +2,6 @@
 
 PyLoNのUDP JSONを受け取り、LiDAR、RGBカメラ、ロボティクスモーター、標準エンジン/RCS、Flight中のactive vesselランタイムプロキシをROS2へpublishする`ament_python`パッケージです。
 
-kRPCは使用しません。このbridgeはPyLoN KSPプラグインと直接UDP通信し、kRPCサーバーやPythonの`krpc`パッケージには依存しません。
-
 - Default vessel IMU: `/ksp_vessel/imu/data_raw` (`sensor_msgs/msg/Imu`, 3軸角速度rad/s・比力m/s²、`base_link`、最大30 Hz)。全機体で追加パーツ不要。操作中の機体に自動追従し、姿勢なし（`orientation_covariance[0]=-1`）。静止時は上向き約+g、自由落下時は約0。角速度は慣性系基準で、KSPの回転物理座標系では惑星の自転を含めます。
 
 `--disable-ground-truth`を付けると、真値パケットを破棄し、真値Topicと`pylon_ground_truth_enu -> base_link`を配信しません。機体IDとlifecycleは独立したセッションheartbeatから生成し、`origin_sequence`はROS側のセッション世代です。LiDAR＋IMUだけで動く[デブリ周回デモ](../../Demo/pylon_demo_debris_orbit/README.md)の検証に使用します。
@@ -62,7 +60,7 @@ Humbleなど別のROS版でビルドしたworkspaceと共用せず、Jazzy用の
 ros2 run pylon_bridge udp_bridge --host 127.0.0.1 --port 49010
 ```
 
-通常は`ROS_LOCALHOST_ONLY`の設定やROS2 daemonの再起動は不要です。起動直後から`/pylon/status`が作成されるため、KSPが未起動でも通常の`ros2 topic list`でbridgeを確認できます。LiDAR固有TopicはIDと2D/3D種別を最初のUDPスキャンから決定するため、Flight中にスキャンを受信した後に作成されます。
+起動直後から`/pylon/status`が作成されるため、KSPが未起動でも通常の`ros2 topic list`でbridgeを確認できます。LiDAR固有TopicはIDと2D/3D種別を最初のUDPスキャンから決定するため、Flight中にスキャンを受信した後に作成されます。
 
 停止通知が欠落した場合のTopic削除時間は`--topic-timeout-sec`で変更できます（デフォルト3秒）。LiDARの最低スキャン周期より長い正の値を指定してください。
 

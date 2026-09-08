@@ -13,7 +13,7 @@ Flight中のactive vesselにあるKSP標準`ModuleEngines` / `ModuleEnginesFX`�
 
 ## フェイルセーフとKSP制約
 
-メインスロットル、RCS 6軸、module固有throttleは既定0.5秒で0になります。連続噴射中は`-r 5`など、タイムアウトより短い周期でpublishしてください。`enabled`だけの起動・停止にはthrottle timeoutを設定しません。
+メインスロットル、RCS 6軸、module固有throttleは既定0.5秒で0になります。連続噴射中はタイムアウトより短い周期で、lease内の`sequence`を毎回増やしてpublishしてください。`enabled`だけの起動・停止にはthrottle timeoutを設定しません。
 
 再点火不可、停止不可、燃料切れ、stage条件、`throttleLocked`などKSP標準moduleの制約が優先されます。
 
@@ -51,7 +51,7 @@ ros2 topic pub --once /ksp_vessel/actuators/propulsion/command \
 
 型付き `EngineCommand` で、対象エンジンの標準 `ModuleGimbal` に個別入力を渡せます。`ModuleEnginesFX` も対象です。追加パーツは不要です。
 
-| 追加Command field | 内容 |
+| TVC Command field | 内容 |
 |---|---|
 | `has_gimbal_command` | `true` でTVCを制御。`false`（既定値）で以前のTVC overrideを解除 |
 | `gimbal_pitch` | KSP pitch入力、−1〜1 |
@@ -70,15 +70,13 @@ ros2 topic pub --once /ksp_vessel/actuators/propulsion/command \
 
 継続制御はtimeoutより短い周期で送信し、送るたびに `sequence` を増やしてください。同じsequenceの繰り返しは受理されません。非有限値や−1〜1の範囲外は拒否します。timeout、lease喪失、緊急停止、機体切替時は偏向を中立へ戻し、標準ジンバル制御へ復帰します。
 
-| 追加State field | 内容 |
+| TVC State field | 内容 |
 |---|---|
 | `gimbal_available` | 対象エンジンのノズルに対応する標準ジンバルがある |
 | `gimbal_command_active` | 対応するジンバルにTVC overrideがある |
 | `gimbal_pitch` / `gimbal_yaw` / `gimbal_roll` | ジンバルへ渡した指令入力。実測偏向角ではない。overrideなしは0 |
 
 TVC非対応エンジンは推力制御のみ動作し、`gimbal_available` はfalseです。複数のエンジンモードが同じジンバルを共有する場合、現在有効な指令のうち最大sequenceのTVC入力が優先され、stateは共有ハードウェアの指令を返します。Body Wrenchの自動配分はTVC角を最適化しません。TVCはこの個別Engine APIで指定してください。
-
-ROSメッセージ定義が変わるため、更新後はbridgeと利用側ノードを再起動し、同じ `pylon_interfaces` を使用してください。
 
 ## 型付きRCS Topic
 
@@ -110,13 +108,3 @@ ros2 topic pub --once /ksp_vessel/actuators/rcs/command \
 | `command_active` | — | 型付きoverride保持中か |
 
 例のidentityは、先に[機体制御API](/api/vehicle-control)で取得したleaseへ置き換えてください。型付きcommandはownerだけが使用でき、対象moduleについてBody Wrench配分より優先されます。timeoutまたはactive vessel切替時はoverrideを解除し、元のEngine independent throttleまたはRCS設定へ戻します。
-
-## 実装確認先
-
-- `Source/PyLoN/Api/Ksp/PyLoNPropulsionSupport.cs`
-- `Ros2/pylon_bridge/pylon_bridge/propulsion_packets.py`
-- `Ros2/pylon_bridge/pylon_bridge/udp_bridge.py`
-- `Ros2/pylon_interfaces/msg/EngineCommand.msg`
-- `Ros2/pylon_interfaces/msg/EngineState.msg`
-- `Ros2/pylon_interfaces/msg/RcsCommand.msg`
-- `Ros2/pylon_interfaces/msg/RcsState.msg`
