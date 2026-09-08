@@ -9,7 +9,7 @@ using UnityEngine;
 
 namespace KerbalLiDAR
 {
-    public class ModuleKerbalRgbCamera : PartModule
+    public partial class ModuleKerbalRgbCamera : PartModule
     {
         private const int ProtocolVersion = 1;
 
@@ -60,6 +60,9 @@ namespace KerbalLiDAR
         public float farClipMeters = 20000f;
 
         [KSPField]
+        public bool useGameClipPlanes = true;
+
+        [KSPField]
         public string cameraOriginLocalPosition = "0, 0, -0.2";
 
         [KSPField]
@@ -91,6 +94,8 @@ namespace KerbalLiDAR
         {
             base.OnStart(state);
             NormalizeConfig();
+            UpdateCameraGimbal();
+            InitializePreview();
         }
 
         public override void OnLoad(ConfigNode node)
@@ -99,41 +104,13 @@ namespace KerbalLiDAR
             NormalizeConfig();
         }
 
-        public override void OnUpdate()
-        {
-            base.OnUpdate();
-            if (HighLogic.LoadedSceneIsEditor)
-            {
-                return;
-            }
-
-            if (!HighLogic.LoadedSceneIsFlight || !cameraEnabled || !udpEnabled)
-            {
-                return;
-            }
-            if (vessel == null || FlightGlobals.ActiveVessel != vessel)
-            {
-                SendInactive();
-                return;
-            }
-
-            var now = Time.realtimeSinceStartup;
-            if (now < nextFrameTime)
-            {
-                return;
-            }
-
-            nextFrameTime = now + 1f / Mathf.Max(1f, frameRateHz);
-            CaptureAndSend();
-        }
-
         [KSPEvent(guiActive = true, guiName = "Capture RGB Frame Now", active = true)]
         public void CaptureNow()
         {
             if (HighLogic.LoadedSceneIsFlight && udpEnabled &&
                 vessel != null && FlightGlobals.ActiveVessel == vessel)
             {
-                CaptureAndSend();
+                CaptureFrame(true);
             }
         }
 
@@ -163,36 +140,46 @@ namespace KerbalLiDAR
 
         public void OnDestroy()
         {
+            DestroyPreview();
             SendInactive();
             DestroyCaptureResources();
             CloseUdpClient();
         }
 
-        private void CaptureAndSend()
+        private void CaptureFrame(bool sendUdp)
         {
             NormalizeConfig();
             var started = Time.realtimeSinceStartup;
+            previewHasFrame = false;
             try
             {
                 var root = part != null && part.transform != null ? part.transform : transform;
-                var forward = AxisToWorld(root, forwardAxis);
-                var up = AxisToWorld(root, upAxis);
-                Orthonormalize(ref forward, ref up, root);
-                var origin = root.TransformPoint(ParseVector3(cameraOriginLocalPosition, Vector3.zero));
-                var rotation = Quaternion.LookRotation(forward, up);
+                Vector3 origin;
+                Quaternion rotation;
+                ResolveCameraPose(root, out origin, out rotation);
 
                 if (sceneCapture == null)
                 {
                     sceneCapture = new KspSceneRgbCapture();
                 }
-                var rgb = sceneCapture.Capture(
+                sceneCapture.Render(
                     imageWidth,
                     imageHeight,
                     origin,
                     rotation,
                     verticalFovDegrees,
                     nearClipMeters,
-                    farClipMeters);
+                    farClipMeters,
+                    useGameClipPlanes);
+                previewHasFrame = true;
+                previewCaptureFailed = false;
+                lastCaptureMs = (Time.realtimeSinceStartup - started) * 1000f;
+                if (!sendUdp)
+                {
+                    return;
+                }
+
+                var rgb = sceneCapture.ReadTopDownRgb();
                 if (rgb.Length > maxFrameBytes)
                 {
                     WarnThrottled("RGB frame is " + rgb.Length + " bytes; select a lower resolution.");
@@ -206,6 +193,8 @@ namespace KerbalLiDAR
             }
             catch (Exception ex)
             {
+                // Keep transport failures separate from successful local rendering.
+                previewCaptureFailed = !previewHasFrame;
                 WarnThrottled("RGB capture failed: " + ex.Message);
             }
         }
@@ -289,6 +278,7 @@ namespace KerbalLiDAR
 
         private void DestroyCaptureResources()
         {
+            previewHasFrame = false;
             if (sceneCapture != null)
             {
                 sceneCapture.Dispose();
@@ -355,7 +345,7 @@ namespace KerbalLiDAR
 
         private void WarnThrottled(string message)
         {
-            var now = Planetarium.GetUniversalTime();
+            var now = Time.realtimeSinceStartup;
             if (now - lastWarningTime < 5.0) return;
             lastWarningTime = now;
             Debug.LogWarning("[KerbalLiDAR] " + message);

@@ -57,14 +57,18 @@
 | `imageWidth` / `imageHeight` | 320 / 240 | 解像度 |
 | `frameRateHz` | 5 | 1〜15 Hz |
 | `verticalFovDegrees` | 60 | 20〜120° |
-| `nearClipMeters` / `farClipMeters` | 0.05 / 20000 | clip plane |
+| `useGameClipPlanes` | `true` | ゲームカメラの描画範囲を維持し、遠方の地形・雲を含める |
+| `nearClipMeters` / `farClipMeters` | 0.05 / 20000 | `useGameClipPlanes = false`時のローカルclip plane制限 |
 | `frameChunkBytes` | 12000 | 1 UDP chunkのraw byte数 |
 | `maxFrameBytes` | 4194304 | raw RGB frame上限 |
 | `maxFrameChunks` | 512 | KSP側のchunk上限 |
 | `partName` | 空 | Topic名。空なら`rgb_camera` |
 | `cameraEnabled` / `udpEnabled` | `true` | capture / UDP送信 |
-| `cameraOriginLocalPosition` | `0, 0, -0.2` | 光学原点 |
-| `forwardAxis` / `upAxis` | `-Z` / `+Y` | camera local軸 |
+| `cameraTiltDegrees` | `90` | 本体の上下首振り。0〜180°、craft／セーブに永続化 |
+| `cameraPivotTransformName` | `CameraPivot` | ローカルX軸で回転する本体。0°の基準回転はidentity |
+| `cameraOpticalTransformName` | `CameraOptical` | 回転本体内の撮影基準Transform。+Zが撮影方向、+Yが画像上方向 |
+| `cameraOriginLocalPosition` | `0, 0, -0.272` | 光学Transformがない旧モデルで使う撮影原点 |
+| `forwardAxis` / `upAxis` | `-Z` / `+Y` | 光学Transformがない場合のcamera local軸 |
 
 ## モーター共通
 

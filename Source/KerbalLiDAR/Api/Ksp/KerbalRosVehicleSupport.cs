@@ -42,7 +42,12 @@ namespace KerbalLiDAR
         public double targetAngularVelocity;
         public double steeringAngle;
         public double maxDriveTorque;
+        public double brake;
         public double targetThrust;
+        public bool hasGimbalCommand;
+        public double gimbalPitch;
+        public double gimbalYaw;
+        public double gimbalRoll;
         public double thrustLimit;
         public bool separate;
     }
@@ -71,10 +76,10 @@ namespace KerbalLiDAR
             {
                 id = part.flightID;
             }
-            return KerbalRosMotorNames.Sanitize(
+            return KerbalRosIdentityScenario.Resolve(kind, part, moduleIndex, KerbalRosMotorNames.Sanitize(
                 kind + "_" + id.ToString(CultureInfo.InvariantCulture) + "_" +
                 Math.Max(0, moduleIndex).ToString(CultureInfo.InvariantCulture),
-                kind);
+                kind));
         }
 
         internal static int ModuleIndex(Part part, PartModule module)
@@ -113,6 +118,7 @@ namespace KerbalLiDAR
         {
             public bool Enabled;
             public float TargetAngularVelocity;
+            public float Brake;
             public float SteeringAngleDegrees;
             public float MaxDriveTorque;
             public float ExpiresAt;
@@ -122,6 +128,9 @@ namespace KerbalLiDAR
         {
             public bool Enabled;
             public float TargetThrust;
+            public bool HasGimbalCommand;
+            public Vector3 GimbalInput;
+            public long Sequence;
             public float ExpiresAt;
         }
 
@@ -147,6 +156,7 @@ namespace KerbalLiDAR
         private sealed class OriginalWheelState
         {
             public bool MotorEnabled;
+            public bool SteeringComponentEnabled;
             public float MaxDriveTorque;
         }
 
@@ -376,6 +386,7 @@ namespace KerbalLiDAR
             RestoreRcsActionGroup();
             RestoreSasState();
             wheelOverrides.Clear();
+            RestoreGimbals(null);
             engineOverrides.Clear();
             rcsOverrides.Clear();
             wrenchActive = false;
@@ -590,10 +601,12 @@ namespace KerbalLiDAR
             {
                 case "wheel":
                     if (!IsFinite(command.targetAngularVelocity) || !IsFinite(command.steeringAngle) ||
-                        !IsFinite(command.maxDriveTorque)) return;
+                        !IsFinite(command.maxDriveTorque) || !IsFinite(command.brake) ||
+                        command.brake < 0.0 || command.brake > 1.0) return;
                     wheelOverrides[name] = new WheelOverride
                     {
                         Enabled = command.enabled,
+                        Brake = (float)command.brake,
                         TargetAngularVelocity = (float)command.targetAngularVelocity,
                         SteeringAngleDegrees = (float)(command.steeringAngle * Mathf.Rad2Deg),
                         MaxDriveTorque = Mathf.Max(
@@ -602,10 +615,18 @@ namespace KerbalLiDAR
                     };
                     break;
                 case "engine":
-                    if (!IsFinite(command.targetThrust)) return;
+                    if (!IsFinite(command.targetThrust) ||
+                        !ValidGimbalAxis(command.gimbalPitch) ||
+                        !ValidGimbalAxis(command.gimbalYaw) ||
+                        !ValidGimbalAxis(command.gimbalRoll)) return;
+                    if (!command.hasGimbalCommand) RestoreGimbals(name);
                     engineOverrides[name] = new EngineOverride
                     {
                         Enabled = command.enabled,
+                        HasGimbalCommand = command.hasGimbalCommand,
+                        GimbalInput = new Vector3((float)command.gimbalPitch,
+                            (float)command.gimbalRoll, (float)command.gimbalYaw),
+                        Sequence = command.sequence,
                         TargetThrust = Mathf.Max(
                             0f, (float)command.targetThrust * NewtonsToKspForceUnit),
                         ExpiresAt = expiresAt
@@ -733,6 +754,7 @@ namespace KerbalLiDAR
             for (var index = 0; index < expired.Count; index++)
             {
                 var name = expired[index];
+                ParkRover();
                 foreach (var wheel in WheelBases())
                 {
                     if (KerbalRosActuatorNames.For("wheel", wheel.part,
@@ -742,6 +764,8 @@ namespace KerbalLiDAR
                     {
                         var motor = wheel.part.FindModuleImplementing<ModuleWheelMotor>();
                         if (motor != null) motor.motorEnabled = original.MotorEnabled;
+                        var steering = wheel.part.FindModuleImplementing<ModuleWheelSteering>();
+                        if (steering != null) steering.enabled = original.SteeringComponentEnabled;
                         if (wheel.Wheel != null)
                         {
                             wheel.Wheel.driveInput = 0f;
@@ -762,6 +786,7 @@ namespace KerbalLiDAR
             {
                 var name = expired[index];
                 engineOverrides.Remove(name);
+                RestoreGimbals(name);
                 if (wrenchActive) continue;
                 foreach (var engine in EngineModules())
                 {
@@ -825,6 +850,7 @@ namespace KerbalLiDAR
                 return;
             }
             ApplyDirectEngineAndRcsCommands();
+            ApplyGimbalCommands();
             if (!wrenchActive)
             {
                 return;
@@ -1177,16 +1203,28 @@ namespace KerbalLiDAR
                 WheelOverride direct;
                 if (!wheelOverrides.TryGetValue(name, out direct)) continue;
                 var motor = wheelBase.part.FindModuleImplementing<ModuleWheelMotor>();
+                var steering = wheelBase.part.FindModuleImplementing<ModuleWheelSteering>();
                 if (!directWheelStates.ContainsKey(wheelBase))
                 {
                     directWheelStates[wheelBase] = new OriginalWheelState
                     {
                         MotorEnabled = motor != null && motor.motorEnabled,
+                        SteeringComponentEnabled = steering != null && steering.enabled,
                         MaxDriveTorque = controller.maxDriveTorque
                     };
                 }
+                // Stock FixedUpdate overwrites steerInput from the vessel-wide
+                // wheelSteer control. Suspend that component while individual
+                // Ackermann angles own the collider; restore it on every exit.
+                if (steering != null) steering.enabled = false;
                 if (motor != null) motor.motorEnabled = direct.Enabled;
-                if (!direct.Enabled)
+                // Normal commands release the parking group. Timeout/release
+                // explicitly leaves it engaged until another command or player.
+                if (direct.Brake <= 0f) vessel.ActionGroups.SetGroup(KSPActionGroup.Brakes, false);
+                var brakes = wheelBase.part.FindModuleImplementing<ModuleWheelBrakes>();
+                if (brakes != null) brakes.brakeInput = direct.Brake;
+                controller.brakeInput = direct.Brake;
+                if (!direct.Enabled || direct.Brake > 0f)
                 {
                     controller.driveInput = 0f;
                     controller.steerInput = 0f;
@@ -1237,11 +1275,14 @@ namespace KerbalLiDAR
 
         private void RestoreDirectWheelStates()
         {
+            if (directWheelStates.Count > 0) ParkRover();
             foreach (var pair in directWheelStates)
             {
                 if (pair.Key == null || pair.Key.Wheel == null) continue;
                 var motor = pair.Key.part.FindModuleImplementing<ModuleWheelMotor>();
                 if (motor != null) motor.motorEnabled = pair.Value.MotorEnabled;
+                var steering = pair.Key.part.FindModuleImplementing<ModuleWheelSteering>();
+                if (steering != null) steering.enabled = pair.Value.SteeringComponentEnabled;
                 pair.Key.Wheel.driveInput = 0f;
                 pair.Key.Wheel.steerInput = 0f;
                 pair.Key.Wheel.maxDriveTorque = pair.Value.MaxDriveTorque;
@@ -1363,6 +1404,7 @@ namespace KerbalLiDAR
 
         private void SendActuatorStates()
         {
+            UpdateRoverGeometry();
             foreach (var wheelBase in WheelBases()) SendWheelState(wheelBase);
             foreach (var engine in EngineModules()) SendEngineState(engine);
             foreach (var rcs in RcsModules()) SendRcsState(rcs);
@@ -1431,6 +1473,7 @@ namespace KerbalLiDAR
                 KerbalRosActuatorNames.ModuleIndex(wheelBase.part, wheelBase));
             var builder = BeginActuatorState("wheel", name, wheelBase.part);
             AppendBoolean(builder, "enabled", motor != null && motor.motorEnabled);
+            AppendWheelGeometry(builder, wheelBase);
             AppendBoolean(builder, "grounded", state.grounded);
             AppendNumber(builder, "angularPosition", controller.wheelCollider == null ? 0f : controller.wheelCollider.angularPosition);
             AppendNumber(builder, "angularVelocity", state.angularVelocity);
@@ -1459,6 +1502,7 @@ namespace KerbalLiDAR
             AppendNumber(builder, "maxThrust",
                 engine.GetMaxThrust() * KspForceUnitInNewtons);
             AppendBoolean(builder, "commandActive", engineOverrides.ContainsKey(name));
+            AppendGimbalState(builder, engine);
             builder.Append('}');
             Send(builder.ToString());
         }
@@ -1724,6 +1768,7 @@ namespace KerbalLiDAR
             RestoreRcsActionGroup();
             RestoreSasState();
             wheelOverrides.Clear();
+            RestoreGimbals(null);
             engineOverrides.Clear();
             rcsOverrides.Clear();
             if (control != null)

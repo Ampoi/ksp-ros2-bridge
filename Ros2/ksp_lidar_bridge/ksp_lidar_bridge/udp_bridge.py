@@ -50,6 +50,7 @@ from std_msgs.msg import Float64, String
 from tf2_ros import TransformBroadcaster
 from trajectory_msgs.msg import JointTrajectory
 
+
 from .camera_packets import (
     CameraFrame,
     CameraFrameAssembler,
@@ -101,6 +102,7 @@ from .domain.control import authority_state_from_packet, wrench_feedback_from_pa
 from .domain.time_alignment import SimulationClock, extrapolate_pose
 from .static_transforms import StaticTransformSnapshot
 from .imu_packets import imu_from_packet
+from .star_tracker_bridge import StarTrackerBridgeMixin
 
 
 def positive_float(value: str) -> float:
@@ -241,7 +243,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-class KerbalLidarUdpBridge(Node):
+class KerbalLidarUdpBridge(StarTrackerBridgeMixin, Node):
     ACTUATOR_TOPIC_NAMES = {
         "wheel": "wheel",
         "engine": "propulsion",
@@ -485,6 +487,8 @@ class KerbalLidarUdpBridge(Node):
                 self.publish_motor_state(packet)
             elif packet_type == "ksp_propulsion_state":
                 self.publish_propulsion_state(packet)
+            elif packet_type == "ksp_star_tracker":
+                self.publish_star_tracker(packet)
             elif packet_type == "ksp_imu":
                 self.publish_imu(packet)
             elif packet_type == "ksp_ground_truth":
@@ -508,6 +512,14 @@ class KerbalLidarUdpBridge(Node):
         except ValueError as exc:
             self.get_logger().warning(f"Dropped invalid IMU packet: {exc}")
             return
+        epoch = (state.vessel_id, str(packet.get("runtimeEpoch", "")))
+        previous_epoch = getattr(self, "runtime_epoch", None)
+        if previous_epoch is not None and epoch[0] == previous_epoch[0] and epoch[1] != previous_epoch[1]:
+            self.vessel_generation += 1
+            self.latest_ground_truth = None
+            self.simulation_clock.reset()
+            self.clear_active_model("runtime_epoch_changed")
+        self.runtime_epoch = epoch
         previous = getattr(self, 'last_imu_identity_time', None)
         time_reset = previous is not None and previous[0] == state.vessel_id and state.universal_time < previous[1]
         if previous is not None and (previous[0] != state.vessel_id or time_reset):
@@ -604,6 +616,7 @@ class KerbalLidarUdpBridge(Node):
             ),
             stamp,
             "camera_optical_frame",
+            dynamic=True,
         )
 
         image = Image()
@@ -745,6 +758,7 @@ class KerbalLidarUdpBridge(Node):
         part_name: str,
         stamp: Any,
         sensor_kind: str = "lidar",
+        dynamic: bool = False,
     ) -> str:
         sensor_kind = sanitize_ros_name(sensor_kind, "sensor")
         sensor_frame = (
@@ -770,6 +784,11 @@ class KerbalLidarUdpBridge(Node):
         message.transform.rotation.y = pose.rotation[1]
         message.transform.rotation.z = pose.rotation[2]
         message.transform.rotation.w = pose.rotation[3]
+        if dynamic:
+            # A camera gimbal moves relative to its part. Preserve the pose at
+            # each image timestamp instead of overwriting a timeless static TF.
+            self.transform_broadcaster.sendTransform(message)
+            return sensor_frame
         fingerprint = (
             part_frame,
             *pose.translation,
@@ -887,6 +906,7 @@ class KerbalLidarUdpBridge(Node):
             self.remove_publisher(topic, reason)
 
     def remove_stale_publishers(self) -> None:
+        self.expire_star_trackers()
         self.camera_assembler.expire()
         now = time.monotonic()
         seen_at = self.latest_ground_truth_seen_at if self.ground_truth_enabled else self.latest_imu_seen_at
@@ -1403,6 +1423,17 @@ class KerbalLidarUdpBridge(Node):
             message.brake_torque = state["brakeTorque"]
             message.slip = state["slip"]
             message.max_drive_torque = state["maxDriveTorque"]
+            message.header.stamp = self.stamp_for_packet(packet)
+            message.vessel_id = str(state.get("vesselId") or self.active_actuator_vessel_id or "")
+            message.wheel_count = state["wheelCount"]
+            message.radius = state["radius"]
+            message.rolling_sign = state["rollingSign"]
+            message.steering_sign = state["steeringSign"]
+            message.steering_enabled = bool(state.get("steeringEnabled", False))
+            message.max_steering_angle = state["maxSteeringAngle"]
+            for field, key in (("position", "position"), ("body_min", "bodyMin"), ("body_max", "bodyMax")):
+                point = getattr(message, field)
+                point.x, point.y, point.z = state[key]
         elif kind == "engine":
             message = EngineState()
             message.header.stamp = stamp
@@ -1412,6 +1443,11 @@ class KerbalLidarUdpBridge(Node):
             message.enabled = bool(state.get("enabled", False))
             message.operational = bool(state.get("operational", False))
             message.flameout = bool(state.get("flameout", False))
+            message.gimbal_available = bool(state.get("gimbalAvailable", False))
+            message.gimbal_command_active = bool(state.get("gimbalCommandActive", False))
+            message.gimbal_pitch = state["gimbalPitch"]
+            message.gimbal_yaw = state["gimbalYaw"]
+            message.gimbal_roll = state["gimbalRoll"]
             message.throttle = state["throttle"]
             message.thrust = state["thrust"]
             message.max_thrust = state["maxThrust"]
@@ -1740,9 +1776,16 @@ class KerbalLidarUdpBridge(Node):
                 targetAngularVelocity=message.target_angular_velocity,
                 steeringAngle=message.steering_angle,
                 maxDriveTorque=message.max_drive_torque,
+                brake=message.brake,
             )
         elif kind == "engine":
             values["targetThrust"] = message.target_thrust
+            values.update(
+                hasGimbalCommand=message.has_gimbal_command,
+                gimbalPitch=message.gimbal_pitch,
+                gimbalYaw=message.gimbal_yaw,
+                gimbalRoll=message.gimbal_roll,
+            )
         elif kind == "rcs":
             values["thrustLimit"] = message.thrust_limit
         try:
@@ -1910,7 +1953,8 @@ class KerbalLidarUdpBridge(Node):
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    args = parse_args(argv)
+    from rclpy.utilities import remove_ros_args
+    args = parse_args(remove_ros_args(args=[sys.argv[0]] + (list(argv) if argv is not None else sys.argv[1:]))[1:])
     rclpy.init(args=None)
     node = KerbalLidarUdpBridge(args)
     try:

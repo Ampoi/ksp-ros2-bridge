@@ -4,18 +4,45 @@ set -euo pipefail
 configuration="Release"
 ksp_dir="${KSPDIR:-}"
 
+usage() {
+    cat <<'USAGE'
+Usage: ./build.sh [options]
+
+KSP modをビルドします。KSPインストール先への同期は行いません。
+
+Options:
+  --ksp-dir PATH        KSPインストール先（KSPDIRでも指定可能）
+  --configuration NAME ビルド構成（既定: Release）
+  -h, --help           ヘルプを表示
+USAGE
+}
+
+require_value() {
+    if [[ $# -lt 2 || -z "$2" || "$2" == --* ]]; then
+        echo "Option requires a value: $1" >&2
+        exit 2
+    fi
+}
+
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --ksp-dir)
+            require_value "$@"
             ksp_dir="$2"
             shift 2
             ;;
         --configuration)
+            require_value "$@"
             configuration="$2"
             shift 2
             ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
         *)
             echo "Unknown argument: $1" >&2
+            usage >&2
             exit 2
             ;;
     esac

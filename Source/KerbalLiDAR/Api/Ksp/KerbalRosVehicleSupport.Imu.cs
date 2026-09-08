@@ -63,6 +63,7 @@ namespace KerbalLiDAR
             AppendNumber(builder, "version", ProtocolVersion);
             AppendString(builder, "vesselId", target.id.ToString("N"));
             AppendNumber(builder, "universalTime", now);
+            AppendString(builder, "runtimeEpoch", RuntimeEpoch);
             AppendVector(builder, "angularVelocity", gyro);
             AppendVector(builder, "linearAcceleration", acceleration);
             builder.Append('}');

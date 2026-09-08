@@ -236,12 +236,10 @@ namespace KerbalLiDAR
             if (vessel == null || FlightGlobals.ActiveVessel != vessel)
             {
                 SendFlightTopicInactive();
-                ClearActiveVesselUrdf();
                 ClearRadarLines();
                 return;
             }
 
-            ProcessActiveVesselUrdf();
 
             if (!lidarEnabled && !radarLinesVisible)
             {
@@ -301,7 +299,6 @@ namespace KerbalLiDAR
             DestroyRadarLines();
             DestroyVisualModel();
             SendFlightTopicInactive();
-            ClearActiveVesselUrdf();
             CloseUdpClient();
         }
 

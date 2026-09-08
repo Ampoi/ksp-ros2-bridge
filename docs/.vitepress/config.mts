@@ -46,6 +46,7 @@ export default defineConfig({
         items: [
           { text: '2D / 3D LiDAR', link: '/parts/lidar' },
           { text: 'RGBカメラ', link: '/parts/camera' },
+          { text: 'スタートラッカー', link: '/parts/star-tracker' },
           { text: 'サーボ / リニアモーター', link: '/parts/motors' },
           { text: 'KSP標準ホイール', link: '/parts/wheels' },
           { text: 'エンジン / RCS', link: '/parts/propulsion' },

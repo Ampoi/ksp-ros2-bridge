@@ -36,3 +36,17 @@ class WithoutTruthTests(unittest.TestCase):
             node.sock.close()
             node.destroy_node()
             rclpy.shutdown()
+
+    def test_teleport_epoch_resets_lifecycle_without_truth_or_vessel_change(self):
+        rclpy.init(domain_id=174)
+        node = KerbalLidarUdpBridge(parse_args(['--host','127.0.0.1','--port','0','--disable-ground-truth']))
+        try:
+            packet=dict(type='ksp_imu',version=1,vesselId='a'*32,universalTime=1.,
+                        runtimeEpoch='before',angularVelocity=[0,0,0],linearAcceleration=[0,0,1.63])
+            node.publish_imu(packet);first=node.vessel_generation
+            packet.update(runtimeEpoch='after',universalTime=2.)
+            node.publish_imu(packet)
+            self.assertGreater(node.vessel_generation,first)
+            self.assertIsNone(node.latest_ground_truth)
+        finally:
+            node.sock.close();node.destroy_node();rclpy.shutdown()

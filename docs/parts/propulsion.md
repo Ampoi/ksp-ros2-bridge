@@ -135,6 +135,39 @@ ros2 topic pub --once /ksp_vessel/actuators/propulsion/command \
 | `thrust` / `max_thrust` | N | 現在推力 / 最大推力 |
 | `command_active` | — | 型付きoverride保持中か |
 
+## エンジンTVC（推力偏向）
+
+型付き `EngineCommand` で、対象エンジンの標準 `ModuleGimbal` に個別入力を渡せます。`ModuleEnginesFX` も対象です。追加パーツは不要です。
+
+| 追加Command field | 内容 |
+|---|---|
+| `has_gimbal_command` | `true` でTVCを制御。`false`（既定値）で以前のTVC overrideを解除 |
+| `gimbal_pitch` | KSP pitch入力、−1〜1 |
+| `gimbal_yaw` | KSP yaw入力、−1〜1 |
+| `gimbal_roll` | KSP roll入力、−1〜1 |
+
+これらは偏向角（rad）やROSの回転ベクトルではなく、KSPの操舵入力です。対象ジンバルだけが反応し、リアクションホイール・RCS・舵面へこの入力を送ることはありません。標準ジンバルの可動範囲、limiter、応答速度、lock、pitch/yaw/rollの有効設定を尊重します。ロールの効き方はノズル配置に依存します。
+
+取得済みleaseを指定した例です。`target_thrust` はNで、TVCと同じメッセージで送ります。
+
+```bash
+ros2 topic pub --once /ksp_vessel/actuators/propulsion/command \
+  ksp_ros2_interfaces/msg/EngineCommand \
+  "{vessel_id: <vessel-id>, controller_id: manual, lease_id: <lease-id>, sequence: 3, id: engine_12345_0, enabled: true, target_thrust: 50000.0, has_gimbal_command: true, gimbal_pitch: 0.2, gimbal_yaw: -0.1, gimbal_roll: 0.0, timeout_sec: 0.5}"
+```
+
+継続制御はtimeoutより短い周期で送信し、送るたびに `sequence` を増やしてください。同じsequenceの繰り返しは受理されません。非有限値や−1〜1の範囲外は拒否します。timeout、lease喪失、緊急停止、機体切替時は偏向を中立へ戻し、標準ジンバル制御へ復帰します。
+
+| 追加State field | 内容 |
+|---|---|
+| `gimbal_available` | 対象エンジンのノズルに対応する標準ジンバルがある |
+| `gimbal_command_active` | 対応するジンバルにTVC overrideがある |
+| `gimbal_pitch` / `gimbal_yaw` / `gimbal_roll` | ジンバルへ渡した指令入力。実測偏向角ではない。overrideなしは0 |
+
+TVC非対応エンジンは推力制御のみ動作し、`gimbal_available` はfalseです。複数のエンジンモードが同じジンバルを共有する場合、現在有効な指令のうち最大sequenceのTVC入力が優先され、stateは共有ハードウェアの指令を返します。Body Wrenchの自動配分はTVC角を最適化しません。TVCはこの個別Engine APIで指定してください。
+
+ROSメッセージ定義が変わるため、更新後はbridgeと利用側ノードを再起動し、同じ `ksp_ros2_interfaces` を使用してください。
+
 ## 型付きRCS Topic
 
 RCS IDは`rcs_<persistentId>_<moduleIndex>`です。QoSはEngineと同じです。

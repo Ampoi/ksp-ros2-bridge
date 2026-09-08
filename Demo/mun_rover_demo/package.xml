@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>mun_rover_demo</name><version>0.1.0</version>
+  <description>Sensor-only Mun rover navigation demo.</description>
+  <maintainer email="user@example.com">Kerbal LiDAR Lab</maintainer><license>MIT</license>
+  <buildtool_depend>ament_python</buildtool_depend>
+  <exec_depend>rclpy</exec_depend><exec_depend>python3-numpy</exec_depend><exec_depend>python3-scipy</exec_depend>
+  <exec_depend>position_estimator</exec_depend><exec_depend>ksp_vehicle_control</exec_depend>
+  <exec_depend>ksp_lidar_bridge</exec_depend><exec_depend>ksp_ros2_interfaces</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend><exec_depend>nav_msgs</exec_depend><exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>sensor_msgs_py</exec_depend><exec_depend>std_msgs</exec_depend><exec_depend>std_srvs</exec_depend>
+  <exec_depend>action_msgs</exec_depend><exec_depend>visualization_msgs</exec_depend><exec_depend>tf2_ros</exec_depend>
+  <exec_depend>nav2_msgs</exec_depend><exec_depend>nav2_smac_planner</exec_depend><exec_depend>nav2_regulated_pure_pursuit_controller</exec_depend>
+  <exec_depend>nav2_controller</exec_depend><exec_depend>nav2_planner</exec_depend><exec_depend>nav2_bt_navigator</exec_depend>
+  <exec_depend>nav2_lifecycle_manager</exec_depend><exec_depend>nav2_rviz_plugins</exec_depend><exec_depend>rviz2</exec_depend>
+  <exec_depend>launch_ros</exec_depend><exec_depend>ament_index_python</exec_depend>
+  <test_depend>python3-pytest</test_depend><export><build_type>ament_python</build_type></export>
+</package>

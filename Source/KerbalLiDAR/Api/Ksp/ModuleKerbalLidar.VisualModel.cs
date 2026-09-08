@@ -13,8 +13,23 @@ namespace KerbalLiDAR
         private string loadedVisualModelPath;
         private float nextVisualModelSyncTime;
 
+        [KSPField]
+        public string iridescentTransformName = "";
+
+        private void EnsureNativeOpticalCoating()
+        {
+            if (part == null || string.IsNullOrEmpty(iridescentTransformName)) return;
+            var dome = part.FindModelTransform(iridescentTransformName);
+            if (dome != null && dome.GetComponent<Renderer>() != null &&
+                dome.GetComponent<LidarIridescentCoating>() == null)
+            {
+                dome.gameObject.AddComponent<LidarIridescentCoating>();
+            }
+        }
+
         private void LoadConfiguredVisualModel()
         {
+            EnsureNativeOpticalCoating();
             if (string.IsNullOrEmpty(visualModelObjPath))
             {
                 return;
@@ -58,17 +73,14 @@ namespace KerbalLiDAR
 
         private void EnsureConfiguredVisualModel()
         {
-            if (string.IsNullOrEmpty(visualModelObjPath))
-            {
-                return;
-            }
-
             if (Time.realtimeSinceStartup < nextVisualModelSyncTime)
             {
                 return;
             }
 
             nextVisualModelSyncTime = Time.realtimeSinceStartup + 0.5f;
+            EnsureNativeOpticalCoating();
+            if (string.IsNullOrEmpty(visualModelObjPath)) return;
             var objPath = ResolveKspRelativePath(visualModelObjPath.Trim());
             if (visualModelObject == null || !string.Equals(loadedVisualModelPath, objPath, StringComparison.Ordinal))
             {

@@ -71,6 +71,10 @@ active vesselモデルと`partFlightId`が対応した場合、`frame_id`は機�
 
 ## 実装確認先
 
+外観はBlender製の専用モデルです。2Dは薄い円筒スキャナ、3DはMid360を参考にした放熱筐体と半球ドームで、3Dの光学面は視線角度に応じて虹色が変化します。編集用`.blend`と再生成手順はGit管理外のローカル開発領域で管理します。
+
+旧モデルの取付座標は維持しています。新しい光学部に合わせ、2Dのray原点はパーツローカル`(0, 0, -0.032)`、3Dはドーム頂点の2mm外側`(0, 0, 0.059)`へ変更しています。3Dの計測方向は従来のFibonacci半球配置です。
+
 - `GameData/KerbalLiDAR/Parts/Lidar2D/part.cfg`
 - `GameData/KerbalLiDAR/Parts/Lidar3D/part.cfg`
 - `Source/KerbalLiDAR/Api/Ksp/ModuleKerbalLidar.cs`

@@ -484,7 +484,7 @@ namespace KerbalLiDAR
 
         private static string PortName(Part part, int moduleIndex)
         {
-            return "docking_port_" + StablePartId(part).ToString(CultureInfo.InvariantCulture) + "_" + Math.Max(0, moduleIndex).ToString(CultureInfo.InvariantCulture);
+            return KerbalRosActuatorNames.For("docking_port", part, moduleIndex);
         }
 
         private static int ModuleIndex(Part part, PartModule module)

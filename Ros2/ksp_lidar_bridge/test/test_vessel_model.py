@@ -153,6 +153,48 @@ class UrdfChunkAssemblerTests(unittest.TestCase):
                 model = candidate
         self.assertIsNotNone(model)
 
+    def test_refresh_with_same_parts_updates_geometry_and_joint_pose(self):
+        assembler = UrdfChunkAssembler()
+        models = []
+        original = proxy_urdf()
+        deployed = original.replace('<box size="1 2 3"/>', '<box size="1 20 3"/>')
+        deployed = deployed.replace('xyz="1 2 3"', 'xyz="4 5 6"')
+        for urdf in (original, deployed):
+            model = None
+            for packet in chunk_packets(urdf):
+                candidate = assembler.consume(packet)
+                if candidate is not None:
+                    model = candidate
+            self.assertIsNotNone(model)
+            models.append(model)
+        self.assertEqual(models[0].part_frames, models[1].part_frames)
+        self.assertEqual(models[0].root_frame, models[1].root_frame)
+        self.assertNotEqual(models[0].model_id, models[1].model_id)
+        self.assertEqual(models[1].transforms[0].translation, (4.0, 5.0, 6.0))
+        self.assertIn('<box size="1 20 3"/>', models[1].urdf)
+
+    def test_accepts_full_primitive_budget_for_complex_part(self):
+        import xml.etree.ElementTree as ET
+
+        robot = ET.fromstring(proxy_urdf())
+        link = robot.find('link')
+        for index in range(47):
+            for kind in ('visual', 'collision'):
+                owner = ET.SubElement(link, kind)
+                ET.SubElement(owner, 'origin', xyz=f'{index} 0 0', rpy='0 0 0')
+                geometry = ET.SubElement(owner, 'geometry')
+                ET.SubElement(geometry, 'box', size='1 2 3')
+        assembler = UrdfChunkAssembler()
+        model = None
+        for packet in chunk_packets(ET.tostring(robot, encoding='unicode')):
+            candidate = assembler.consume(packet)
+            if candidate is not None:
+                model = candidate
+        self.assertIsNotNone(model)
+        received_link = ET.fromstring(model.urdf).find('link')
+        self.assertEqual(len(received_link.findall('visual')), 48)
+        self.assertEqual(len(received_link.findall('collision')), 48)
+
     def test_rejects_non_positive_cylinder_dimension(self):
         packets = chunk_packets(proxy_urdf('<cylinder radius="0" length="2"/>'))
         assembler = UrdfChunkAssembler()

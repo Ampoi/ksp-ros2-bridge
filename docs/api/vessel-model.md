@@ -28,8 +28,8 @@ bridgeがURDF固定jointを`/tf_static`へpublishし、CoM変化があるroot ed
 
 ## 更新と期限切れ
 
-- LiDARパーツのうち1個がactive vesselモデルの送信担当になります。
-- 機体構成や相対姿勢が変わると新しいURDFを送ります。
+- Flight共通の`KerbalRosVesselModelManager`がactive vesselモデルを送信します。LiDAR非搭載の機体にも対応し、送信担当は常に一つです。
+- 毎回の更新で全パーツの現在の形状と相対姿勢を取得します。構成変更だけでなく、展開・可動・サイズ変更もURDFとTFへ反映します（連続アニメーションではなく更新間隔ごとのスナップショットです）。
 - 既定の再送間隔は2秒です。
 - 受信モデルの有効期限は`max(3秒, refresh間隔 × 3)`です。既定では6秒です。
 - active vessel切替やFlight終了ではclearを送ります。
@@ -46,7 +46,11 @@ bridgeがURDF固定jointを`/tf_static`へpublishし、CoM変化があるroot ed
 ## 資産保護と受信検証
 
 - link名はKSPの永続的なvessel IDの短縮prefixを含む匿名名です。同じ機体の再ロードで安定し、機体間では衝突しません。
-- visual / collisionはcollider由来のbox、cylinder、sphereだけです。
+- 標準・DLC・MODのパーツ名による対応表は使わず、機体の全パーツを走査します。
+- visual / collisionは描画要素の形状に近いbox、cylinder、sphereだけです。SkinnedMeshはアニメーション用local boundsを直方体で近似します。
+- 描画要素がない場合は非trigger colliderを近似し、それもないパーツには25 cmの直方体を置きます。
+- 1パーツあたり最大48形状とし、超過分は全体を覆う1つの直方体にまとめます。
+- 各linkの座標はメートル単位です。パーツのスケールを位置・寸法へ反映し、円柱の軸をURDFのZ軸へ変換します。
 - mesh colliderも近いprimitiveへ単純化し、元meshは含みません。
 - `GameData` path、part名、メーカー名、textureを含みません。
 - gzip、base64、SHA-256、chunk数、展開サイズを検証します。
@@ -57,6 +61,25 @@ bridgeがURDF固定jointを`/tf_static`へpublishし、CoM変化があるroot ed
 
 ## 実装確認先
 
-- `Source/KerbalLiDAR/Api/Ksp/ModuleKerbalLidar.VesselUrdf.cs`
+- `Source/KerbalLiDAR/Api/Ksp/KerbalRosVesselModelManager.Geometry.cs`
 - `Ros2/ksp_lidar_bridge/ksp_lidar_bridge/vessel_model.py`
 - `Ros2/ksp_lidar_bridge/ksp_lidar_bridge/udp_bridge.py`
+
+## 共通モデル設定
+
+`KERBAL_ROS2_MODEL` ConfigNodeで設定します。設定ノードがない場合は従来の送信担当に相当する最初の有効なLiDAR設定を使用し、LiDARがない場合はloopback:49010へ2秒間隔で送信します。全機体で無効化する場合は共通設定の`enabled = false`を指定します。
+
+```text
+KERBAL_ROS2_MODEL
+{
+    enabled = true
+    udpHost = 127.0.0.1
+    udpPort = 49010
+    refreshSeconds = 2
+    chunkBytes = 12000
+    maxChunks = 256
+    allowRemoteUrdf = false
+}
+```
+
+共通設定ノードが存在する場合は共通設定を優先し、未指定フィールドには上記の既定値を使用します。機体を切り替えるかFlightを開始すると設定を読み直します。従来のLiDAR個別設定は互換用で、LiDARからのモデル二重送信は行いません。

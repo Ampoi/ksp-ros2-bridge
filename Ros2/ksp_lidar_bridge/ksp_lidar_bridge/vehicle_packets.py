@@ -145,13 +145,22 @@ def actuator_state_from_packet(packet: Mapping[str, Any]) -> Dict[str, Any]:
             "angularPosition", "angularVelocity", "steeringAngle", "driveTorque",
             "brakeTorque", "slip", "maxDriveTorque",
         ),
-        "engine": ("throttle", "thrust", "maxThrust"),
+        "engine": ("throttle", "thrust", "maxThrust", "gimbalPitch", "gimbalYaw", "gimbalRoll"),
         "rcs": ("thrust", "maxThrust", "thrustLimit"),
         "motor": ("position", "velocity", "effort", "target", "current"),
         "separation": (),
     }[kind]
     for field in finite_fields:
         state[field] = _finite(packet.get(field, 0.0), field)
+    if kind == "wheel":
+        for field in ("radius", "rollingSign", "steeringSign", "maxSteeringAngle"):
+            state[field] = _finite(packet.get(field, 0.0), field)
+        for field in ("position", "bodyMin", "bodyMax"):
+            state[field] = _vector(packet, field, 3) if field in packet else (0., 0., 0.)
+        count = as_int(packet.get("wheelCount"), 0)
+        if not 0 <= count <= 128:
+            raise ValueError("invalid wheel count")
+        state["wheelCount"] = count
     if kind == "separation":
         mechanism = str(packet.get("mechanism") or "").lower()
         if mechanism not in SUPPORTED_SEPARATION_MECHANISMS:
@@ -306,6 +315,18 @@ def actuator_command(
             command[key] = value
         else:
             command[key] = _finite(value, key) if isinstance(value, (int, float)) else value
+    if normalized_kind == "wheel":
+        brake = _finite(values.get("brake", 0.0), "brake")
+        if not 0.0 <= brake <= 1.0:
+            raise ValueError("brake must be between 0 and 1")
+        command["brake"] = brake
+    if normalized_kind == "engine":
+        command["hasGimbalCommand"] = bool(values.get("hasGimbalCommand", False))
+        for field in ("gimbalPitch", "gimbalYaw", "gimbalRoll"):
+            value = _finite(values.get(field, 0.0), field)
+            if not -1.0 <= value <= 1.0:
+                raise ValueError(f"{field} must be between -1 and 1")
+            command[field] = value
     return command
 
 

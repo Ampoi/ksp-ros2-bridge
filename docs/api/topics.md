@@ -23,6 +23,15 @@ Topicは、操作中の機体に属するものを`/ksp_vessel`、bridgeプロ�
 
 タイムスタンプはKSPのシミュレーション時刻を既存bridge時計に写像します。Flight以外、物理演算停止（packed）、ポーズ中は新規測定を出力しません。ロード・機体切替・unpack直後は1サンプル待ちます。仮想センサーは機体重心の比力を機体軸で表すもので、個別パーツ位置の回転による加速度はモデル化しません。非アクティブ機体の個別Topicは作成しません。
 
+## スタートラッカー
+
+| 方向 | Topic | 型 | 内容 |
+|---|---|---|---|
+| Publish | `/ksp_vessel/star_tracker/<id>/state` | `ksp_ros2_interfaces/msg/StarTrackerState` | 姿勢・共分散・valid・測定不能理由を同時配信 |
+| Publish | `/ksp_vessel/star_tracker/<id>/attitude` | `geometry_msgs/msg/QuaternionStamped` | 有効な慣性姿勢のみ |
+
+専用パーツを取り付けると既定5 Hz、Reliable / Volatile / depth 10で配信します。位置は測定しません。`state.valid=false`時はquaternionが全0、共分散先頭が−1です。通信断でも`stale`状態を通知します。座標・制約・再捕捉・Topicの寿命は[スタートラッカー](../parts/star-tracker.md)を参照してください。
+
 ## 機体・モデル
 
 | 方向 | Topic | 型 | QoS / 内容 |
@@ -92,7 +101,7 @@ LiDARとRGBカメラのIDはVAB/SPHの`Edit ROS2 Sensor ID`で設定します。
 | Publish | `/ksp_vessel/docking_ports/<id>/state` | `ksp_ros2_interfaces/msg/DockingPortState` |
 | Subscribe | `/ksp_vessel/docking_ports/<id>/command` | `ksp_ros2_interfaces/msg/DockingPortCommand` |
 
-`<id>`は`docking_port_<persistentId>_<moduleIndex>`です。commandは`SELECT_CAMERA`、`STOP_CAMERA`、`RELEASE`を提供します。
+`<id>`の既定値は`docking_port_<persistentId>_<moduleIndex>`です。commandは`SELECT_CAMERA`、`STOP_CAMERA`、`RELEASE`を提供します。
 
 ## 主な起動引数
 

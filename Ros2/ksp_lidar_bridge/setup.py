@@ -11,7 +11,7 @@ setup(
         ("share/" + package_name, ["package.xml"]),
     ],
     install_requires=["setuptools"],
-    zip_safe=True,
+    zip_safe=False,
     maintainer="Kerbal LiDAR Lab",
     maintainer_email="user@example.com",
     description="Bridge KerbalLiDAR sensors, motors, propulsion, and runtime URDF proxies to ROS2.",

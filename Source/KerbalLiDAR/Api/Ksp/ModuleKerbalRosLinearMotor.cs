@@ -7,10 +7,10 @@ namespace KerbalLiDAR
     /// <summary>
     /// DLC-independent linear actuator built on the same passive-editor,
     /// flight-joint lifecycle as ModuleKerbalRosServo. In the editor this is
-    /// an ordinary two-node beam, so one click places one contracted part.
+    /// a two-node telescoping housing with an adjustable output attachment.
     /// In flight the joint at the top node is converted into a driven slider.
     /// </summary>
-    public sealed class ModuleKerbalRosLinearMotor : ModuleJointMotor, IKerbalRosMotor
+    public sealed partial class ModuleKerbalRosLinearMotor : ModuleJointMotor, IKerbalRosMotor
     {
         [KSPField(isPersistant = true)]
         public string motorName = "";
@@ -21,16 +21,19 @@ namespace KerbalLiDAR
 
         [KSPField] public float minExtension;
         [KSPField] public float maxExtension = 1.6f;
-        [KSPField] public float traverseVelocity = 0.25f;
+        [KSPField(isPersistant = true, guiActive = true, guiActiveEditor = true, guiName = "Travel Speed", guiUnits = " m/s", guiFormat = "F2")]
+        [UI_FloatRange(minValue = 0.02f, maxValue = 1f, stepIncrement = 0.01f)]
+        public float traverseVelocity = 0.5f;
         [KSPField] public float minTraverseVelocity = 0.02f;
-        [KSPField] public float maxTraverseVelocity = 0.35f;
+        [KSPField] public float maxTraverseVelocity = 1f;
         [KSPField] public float positionGain = 3f;
         [KSPField] public float extensionTolerance = 0.002f;
         [KSPField] public float jointDamper = 100f;
         [KSPField] public float maxForce = 4000f;
         [KSPField] public string drivenNodeName = "top";
-        [KSPField] public string movingTransformName = "port";
-        [KSPField] public string movingModelPath = "Squad/Parts/Structural/structuralIBeam200Pocket/model";
+        [KSPField] public string movingTransformName = "LinearRod";
+        [KSPField] public string intermediateTransformName = "LinearSleeve";
+        [KSPField] public string movingModelPath = "";
         [KSPField] public string movingModelPosition = "0, 0.8024656, 0";
         [KSPField] public string movingModelRotation = "0, 0, 0";
         [KSPField] public string movingModelScale = "0.78, 1, 0.78";
@@ -50,16 +53,19 @@ namespace KerbalLiDAR
         [KSPField(guiActive = true, guiName = "ROS Command")]
         public string rosCommandState = "Waiting";
 
-        [KSPField(guiActive = true, guiName = "Current Extension", guiUnits = " m", guiFormat = "F3")]
+        [KSPField(isPersistant = true, guiActive = true, guiName = "Current Extension", guiUnits = " m", guiFormat = "F3")]
         public float currentExtension;
 
         [KSPField(guiActive = true, guiName = "Motor Status")]
         public string motorStatus = "Waiting for joint";
 
         private Transform movingTransform;
+        private Transform intermediateTransform;
+        private Vector3 intermediateRestPosition;
         private Vector3 movingTransformRestPosition;
         private bool movingTransformReady;
         private bool jointInitialized;
+        private bool loadedCurrentExtension;
         private Part drivenPart;
         private Vector3 referenceLocalDrivenPosition;
         private float referenceExtension;
@@ -96,13 +102,17 @@ namespace KerbalLiDAR
         {
             jointNodeName = drivenNodeName;
             targetExtension = ClampExtension(targetExtension);
+            traverseVelocity = Mathf.Clamp(traverseVelocity, minTraverseVelocity, maxTraverseVelocity);
             editorAppliedExtension = targetExtension;
-            currentExtension = targetExtension;
+            currentExtension = HighLogic.LoadedSceneIsFlight && loadedCurrentExtension
+                ? ClampExtension(currentExtension) : targetExtension;
             effortLimitN = Mathf.Max(0f, Mathf.Min(maxForce, ratedEffortN));
             rosJointDisplay = JointName;
             EnsureVisuals();
             CacheMovingTransform();
-            SetVisualExtension(targetExtension);
+            SetVisualExtension(currentExtension);
+            CacheDrivenNode();
+            UpdateDrivenNode(currentExtension);
 
             if (HighLogic.LoadedSceneIsFlight)
             {
@@ -114,6 +124,7 @@ namespace KerbalLiDAR
 
         protected override void OnModuleLoad(ConfigNode node)
         {
+            loadedCurrentExtension = node.HasValue("currentExtension");
         }
 
         protected override void OnModuleSave(ConfigNode node)
@@ -139,10 +150,17 @@ namespace KerbalLiDAR
                 return;
             }
 
-            KerbalRosMotorCollisions.EnableBetweenConnectedParts(part, drivenPart, joint);
+            foreach (var slider in pJoint.joints)
+            {
+                if (slider != null)
+                    KerbalRosMotorCollisions.EnableBetweenConnectedParts(part, drivenPart, slider);
+            }
+            CacheMovingContactPairs();
 
             referenceLocalDrivenPosition = part.transform.InverseTransformPoint(drivenPart.transform.position);
-            referenceExtension = targetExtension;
+            // A command may arrive while KSP is still creating the joint.
+            // Its reference is the actual loaded pose, not the new target.
+            referenceExtension = currentExtension;
             currentExtension = referenceExtension;
             previousMeasuredExtension = currentExtension;
             driveSign = 1f;
@@ -175,6 +193,7 @@ namespace KerbalLiDAR
             editorAppliedExtension = requestedExtension;
             currentExtension = requestedExtension;
             SetVisualExtension(requestedExtension);
+            UpdateDrivenNode(requestedExtension);
             if (EditorLogic.fetch != null && EditorLogic.fetch.ship != null)
             {
                 GameEvents.onEditorShipModified.Fire(EditorLogic.fetch.ship);
@@ -196,6 +215,7 @@ namespace KerbalLiDAR
             lastManagedFrame = Time.frameCount;
             elapsed = Mathf.Max(elapsed, 0.0001f);
             UpdateVelocityCommand(elapsed);
+            EnsureFlightJoint();
             UpdateFlightMotor();
             UpdateStateVelocity(elapsed);
         }
@@ -332,6 +352,7 @@ namespace KerbalLiDAR
             }
 
             EnsureJointConfiguration();
+            ExcludeMovingOutputContacts();
             currentExtension = MeasureCurrentExtension();
             CalibrateDriveSign();
             var error = targetExtension - currentExtension;
@@ -352,10 +373,21 @@ namespace KerbalLiDAR
             SetLinearMotorSpeed(logicalSpeed * driveSign);
             lastLogicalSpeed = logicalSpeed;
             SetVisualExtension(currentExtension);
+            UpdateDrivenNode(currentExtension);
+            PreserveDrivenBranchPose();
         }
 
         private float MeasureCurrentExtension()
         {
+            var outputNode = drivenPart.FindAttachNodeByPart(part);
+            if (outputNode != null && drivenNode != null)
+            {
+                // Measure mating faces, not a saved target/reference value.
+                // KSP can restore an older craft pose on reload or unpack.
+                var outputFace = part.transform.InverseTransformPoint(
+                    drivenPart.transform.TransformPoint(outputNode.position));
+                return Vector3.Dot(outputFace - contractedNodePosition, Vector3.up);
+            }
             var localPosition = part.transform.InverseTransformPoint(drivenPart.transform.position);
             return referenceExtension + Vector3.Dot(localPosition - referenceLocalDrivenPosition, Vector3.up);
         }
@@ -390,43 +422,6 @@ namespace KerbalLiDAR
             if (!motorEngaged || motorLocked)
             {
                 SetLinearMotorSpeed(0f);
-            }
-        }
-
-        private void ConfigureDrive()
-        {
-            if (!jointInitialized || joint == null)
-            {
-                return;
-            }
-
-            var drive = joint.xDrive;
-            drive.positionSpring = 0f;
-            drive.positionDamper = motorEngaged ? Mathf.Max(0f, jointDamper) : 0f;
-            drive.maximumForce = motorEngaged ? Mathf.Max(0f, effortLimitN) : 0f;
-            joint.xDrive = drive;
-        }
-
-        private void EnsureJointConfiguration()
-        {
-            if (joint == null)
-            {
-                return;
-            }
-
-            joint.xMotion = motorLocked ? ConfigurableJointMotion.Locked : ConfigurableJointMotion.Free;
-            joint.yMotion = ConfigurableJointMotion.Locked;
-            joint.zMotion = ConfigurableJointMotion.Locked;
-            joint.angularXMotion = ConfigurableJointMotion.Locked;
-            joint.angularYMotion = ConfigurableJointMotion.Locked;
-            joint.angularZMotion = ConfigurableJointMotion.Locked;
-        }
-
-        private void SetLinearMotorSpeed(float speed)
-        {
-            if (joint != null)
-            {
-                joint.targetVelocity = new Vector3(speed, 0f, 0f);
             }
         }
 
@@ -508,6 +503,15 @@ namespace KerbalLiDAR
                 return;
             }
 
+            // Native assets include the moving hierarchy in the prefab, so it is
+            // present during icon generation, editor cloning and flight loading.
+            if (string.IsNullOrEmpty(movingModelPath))
+            {
+                if (part.FindModelTransform(movingTransformName) == null)
+                    Debug.LogError("[KerbalLiDAR] Linear actuator model is missing " + movingTransformName);
+                return;
+            }
+
             var target = KerbalRosMotorVisuals.EnsureTransform(part, movingTransformName);
             if (target == null)
             {
@@ -534,10 +538,17 @@ namespace KerbalLiDAR
             movingTransform = part.FindModelTransform(movingTransformName);
             if (movingTransform != null)
             {
-                movingTransformRestPosition = movingTransform.localPosition;
+                // Native stage origins are zero. An editor clone can already be
+                // extended; treating that pose as rest would apply travel twice.
+                movingTransformRestPosition = string.IsNullOrEmpty(movingModelPath)
+                    ? Vector3.zero : movingTransform.localPosition;
             }
 
-            movingTransformReady = true;
+            intermediateTransform = part.FindModelTransform(intermediateTransformName);
+            if (intermediateTransform != null)
+                intermediateRestPosition = Vector3.zero;
+            // Retry if the prefab hierarchy is not available yet.
+            movingTransformReady = movingTransform != null;
         }
 
         private void SetVisualExtension(float extension)
@@ -546,6 +557,10 @@ namespace KerbalLiDAR
             if (movingTransform != null)
             {
                 movingTransform.localPosition = movingTransformRestPosition + Vector3.up * ClampExtension(extension);
+            }
+            if (intermediateTransform != null)
+            {
+                intermediateTransform.localPosition = intermediateRestPosition + Vector3.up * (0.5f * ClampExtension(extension));
             }
         }
 
