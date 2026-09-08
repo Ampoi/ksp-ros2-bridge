@@ -11,7 +11,7 @@ PyLoN is a KSP sensor, vessel-model and control platform. LiDAR is one sensor ad
 | Ros2/pylon_bridge | UDP and ROS adapters; domain session/time rules | Interfaces, standard ROS |
 | Ros2/pylon_vehicle_control | Reusable control law and lease coordinator | Interfaces, standard ROS |
 | Ros2/pylon_perception | Optional point-cloud primitives | NumPy |
-| Demo | Three runnable examples | Public packages only |
+| Demo | Four runnable examples | Public packages only |
 | Migration | One-shot conversion and recognized-install retirement | Python standard library |
 | Development | Ignored local probes, authoring and evidence | Never a production dependency |
 
@@ -33,4 +33,4 @@ Sampling uses KSP universal time; receiving and expiration use monotonic wall ti
 
 ## Build boundary
 
-`sync.sh` builds the three core ROS packages by default. `--demo` selects a named demo; `--all-demos` selects all three. Optional dependencies are never imported by core packages. The explicit C# compile list excludes local debugging sources. Public builds do not import Development, Tools, debug projects or their outputs.
+`sync.sh` builds the three core ROS packages by default. `--demo` selects a named demo; `--all-demos` selects all demos. Optional dependencies are never imported by core packages. The explicit C# compile list excludes local debugging sources. Public builds do not import Development, Tools, debug projects or their outputs.

@@ -20,7 +20,7 @@
 
 ## ビルド
 
-リポジトリ直下で次を実行すると、bridge、interfaces、Nav2、pylon_demo_debris_orbitと一緒にこのデモも`~/ros2_ws`へ同期・ビルドされます。
+リポジトリ直下で次を実行すると、本体のROS2パッケージ、`pylon_perception`と一緒にこのデモを`~/ros2_ws`へ同期・ビルドされます。
 
 ```bash
 ./sync.sh --demo position_estimator

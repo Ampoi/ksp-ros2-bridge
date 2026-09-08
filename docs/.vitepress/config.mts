@@ -2,22 +2,23 @@ import { defineConfig } from 'vitepress'
 
 export default defineConfig({
   lang: 'ja-JP',
-  title: 'PyLoN API',
+  title: 'PyLoN Docs',
   description: 'PyLoN KSP mod と ROS2 bridge の起動・Topic・パーツ設定リファレンス',
   cleanUrls: true,
   lastUpdated: true,
   head: [
-    ['meta', { name: 'theme-color', content: '#071b2f' }],
-    ['meta', { property: 'og:title', content: 'PyLoN API' }],
+    ['meta', { name: 'theme-color', content: '#003dff' }],
+    ['meta', { property: 'og:title', content: 'PyLoN Docs' }],
     ['meta', { property: 'og:description', content: 'KSP 1.x と ROS2 をつなぐセンサー・ロボティクスAPIドキュメント' }]
   ],
   markdown: {
     lineNumbers: true
   },
   themeConfig: {
-    siteTitle: 'PyLoN API',
+    siteTitle: 'PyLoN Docs',
     nav: [
       { text: '導入ガイド', link: '/guide/getting-started' },
+      { text: 'デモ', link: '/demos/' },
       { text: 'APIリファレンス', link: '/api/topics' },
       { text: '設定・運用', link: '/reference/bridge-options' },
       { text: '本体への貢献', link: '/contributing/' }
@@ -29,8 +30,15 @@ export default defineConfig({
           { text: 'Getting Started', link: '/guide/getting-started' },
           { text: 'システム概要', link: '/guide/overview' },
           { text: 'ROS2アプリケーションを作る', link: '/guide/application-development' },
-          { text: '月面ローバーとNav2', link: '/guide/nav2' },
-          { text: 'PyLoNへの移行', link: '/reference/migration' }
+        ]
+      },
+      {
+        text: 'デモ',
+        items: [
+          { text: 'デモ一覧・共通準備', link: '/demos/' },
+          { text: '軌道上のデブリ周回・撮影', link: '/demos/debris-orbit' },
+          { text: '2D LiDARとSLAM', link: '/demos/lidar-slam' },
+          { text: '月面Nav2', link: '/demos/mun-nav2' }
         ]
       },
       {

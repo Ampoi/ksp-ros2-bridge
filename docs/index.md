@@ -2,7 +2,7 @@
 layout: home
 
 hero:
-  name: PyLoN API
+  name: PyLoN
   text: KSPをROS2ロボットへ
   tagline: センサー、モーター、ホイール、推進系、機体WrenchとGround TruthをROS2から扱うための導入ガイドとAPIリファレンス。
   actions:
@@ -39,6 +39,14 @@ PyLoNを使って、KSPのセンサーデータを処理するROS2ノードや�
 1. [Getting Started](/guide/getting-started)で環境を準備し、機体情報と点群の受信を確認します。
 2. [ROS2アプリケーションを作る](/guide/application-development)で、Topicの購読と制御ノードの接続方法を確認します。
 3. [Topic一覧](/api/topics)とパーツ別APIで、必要なメッセージ型・単位・座標系・動作条件を調べます。
+
+## デモ
+
+[デモ一覧](/demos/)から、機体の準備・起動・動作確認・停止の手順を確認できます。
+
+- [軌道上のデブリ周回・撮影](/demos/debris-orbit)
+- [2D LiDARとSLAM](/demos/lidar-slam)：地図作成・保存・Nav2走行
+- [月面Nav2](/demos/mun-nav2)
 
 ## APIリファレンス
 

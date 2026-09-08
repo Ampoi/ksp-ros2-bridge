@@ -63,10 +63,10 @@ ros2 interface show pylon_interfaces/msg/ControlSetpoint
 
 ## 4. サンプルを参照する
 
-リポジトリの各デモに構成と起動手順があります。
+[デモ一覧](../demos/index.md)から、機体準備と起動手順を確認できます。
 
-- `Demo/pylon_demo_position_estimator/README.md`：位置推定
-- `Demo/pylon_demo_debris_orbit/README.md`：デブリ周回の推定・誘導・撮影
-- [Nav2月面ローバー](nav2.md)：点群・IMU・車輪を使う自律走行
+- [軌道上のデブリ周回・撮影](../demos/debris-orbit.md)：相対運動の推定、RCS制御、画像保存
+- [2D LiDARとSLAM](../demos/lidar-slam.md)：地図作成・保存・Nav2走行
+- [月面Nav2](../demos/mun-nav2.md)：点群・IMU・車輪を使う自律走行
 
 通信先やTopic名を変える場合は[Bridge起動オプション](../reference/bridge-options.md)、接続できない場合は[トラブルシュート](../reference/troubleshooting.md)を参照してください。

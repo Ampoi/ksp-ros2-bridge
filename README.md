@@ -28,13 +28,13 @@ PyLoNは、Kerbal Space Program 1.xのセンサーと機体をROS2から扱う�
 - [トラブルシュート](docs/reference/troubleshooting.md)：Topicの受信、モーター制御、画像・機体モデル表示の確認
 - [移行ガイド](Migration/README.md)：既存セーブ・機体・ワークスペースの更新
 
-## サンプルアプリケーション
+## デモ
 
-- [位置推定](Demo/pylon_demo_position_estimator/README.md)
-- [デブリ周回](Demo/pylon_demo_debris_orbit/README.md)
-- [Nav2月面ローバー](Demo/pylon_demo_mun_rover/README.md)
+[デモ一覧・共通準備](docs/demos/index.md)から、使うセンサーと目的に合うデモを選べます。各ページに機体の準備から起動、動作確認、停止までをまとめています。
 
-追加の依存パッケージと起動手順は各デモのREADMEを参照してください。
+- [軌道上のデブリ周回・撮影](docs/demos/debris-orbit.md)
+- [2D LiDARとSLAM](docs/demos/lidar-slam.md)：地図作成・保存・Nav2走行
+- [月面Nav2](docs/demos/mun-nav2.md)
 
 ## PyLoN本体への貢献
 
