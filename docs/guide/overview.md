@@ -1,5 +1,7 @@
 # システム概要
 
+初めて導入する場合は、[Getting Started](getting-started.md)で必要なソフトのインストールから受信確認まで進めてください。
+
 PyLoNは、KSP 1.xのFlightシーンとROS2ノードの間を2本のUDP経路で接続します。ROS2側では、用途ごとに標準メッセージへ変換されたTopicだけを扱えばよく、UDP JSONを直接処理する必要はありません。
 
 <div class="topic-flow">
@@ -26,9 +28,8 @@ PyLoNは、KSP 1.xのFlightシーンとROS2ノードの間を2本のUDP経路で
 | PyLoN LiDAR 2D | `sensor_msgs/msg/LaserScan` | 平面距離スキャン |
 | PyLoN LiDAR 3D | `sensor_msgs/msg/PointCloud2` | 前方半球点群 |
 | PyLoN RGB Camera | `Image` + `CameraInfo` | RGB画像と内部パラメーター |
-| ROS2 Size-0 Axial Servo | `MotorCommand` / `JointState` | 回転軸制御 |
-| ROS2 Telescoping I-Beam Actuator | `MotorCommand` / `JointState` | 最大約2倍に伸びる直動軸制御 |
-| KSP標準Engine / RCS | `String` / `Float64` / `Twist` | 推進・6軸入力 |
+| PyLoN Size-0 Axial Servo | `MotorCommand` / `JointState` | 回転軸制御 |
+| PyLoN Slim Telescoping Actuator | `MotorCommand` / `JointState` | 最大約2倍に伸びる直動軸制御 |
 | KSP標準Wheel / Engine / RCS | `pylon_interfaces` | パーツ単位の型付き制御・状態 |
 | KSP標準ドッキングポート | `DockingPortCommand/State` + `Image` | 状態、切離し、選択式ポートカメラ |
 | active vessel | `BodyWrenchCommand` / `WrenchFeedback` / `PoseStamped` | 所有権付き機体要求・実現量・Ground Truth |
@@ -46,6 +47,6 @@ PyLoNは、KSP 1.xのFlightシーンとROS2ノードの間を2本のUDP経路で
 
 ## 名前と座標系
 
-センサーTopicの`<part_name>`は、VAB/SPHのパーツ右クリックメニューから設定します。英数字とアンダースコアへ正規化され、同一機体内の重複には`_2`、`_3`のような接尾辞が付きます。
+センサーTopicの`<sensor_id>`は、VAB/SPHのパーツ右クリックメニューから設定します。英数字とアンダースコアへ正規化され、同一機体内の重複には`_2`、`_3`のような接尾辞が付きます。
 
 LiDARはROSセンサー座標の`+X`前方・`+Z`上方です。カメラはREP-103 optical座標の`+X`右・`+Y`下・`+Z`前方です。active vesselモデルを受信できた場合、各メッセージの`frame_id`はSensor ID由来の安定名になり、対応する機体linkへ`/tf_static`で接続されます。

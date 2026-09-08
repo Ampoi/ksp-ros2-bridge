@@ -4,7 +4,7 @@ Kerbal Space Program 1.x向けのセンサー・ロボティクスmodです。2D
 
 ## APIドキュメント
 
-起動手順、全Topic、パーツごとの入出力、設定値はVitePressドキュメントにまとめています。
+[Getting Started](docs/guide/getting-started.md)に、必要なソフトの導入、MODのインストール、ROS2 bridgeの起動と受信確認をまとめています。全Topic、パーツごとの入出力、設定値もVitePressドキュメントから参照できます。
 
 ```bash
 cd docs

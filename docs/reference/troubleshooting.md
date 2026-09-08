@@ -41,7 +41,7 @@ ros2 run pylon_bridge udp_bridge \
 - サーボはrad、リニアはmで指定する
 - `bottom`側を親、動かす構造を`top`側へ取り付ける
 - KSPのPart Action Windowで電力、engage、lock状態を確認する
-- bridgeの`--command-host` / `--command-port`とパーツの`commandUdpPort`を合わせる
+- bridgeの`--command-host` / `--command-port`と共通設定`PYLON_TRANSPORT.commandPort`を合わせる
 
 ## 速度指令・推力がすぐ止まる
 

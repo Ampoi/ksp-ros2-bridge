@@ -6,9 +6,9 @@ kRPCは使用しません。このbridgeはPyLoN KSPプラグインと直接UDP�
 
 - Default vessel IMU: `/ksp_vessel/imu/data_raw` (`sensor_msgs/msg/Imu`, 3軸角速度rad/s・比力m/s²、`base_link`、最大30 Hz)。全機体で追加パーツ不要。操作中の機体に自動追従し、姿勢なし（`orientation_covariance[0]=-1`）。静止時は上向き約+g、自由落下時は約0。角速度は慣性系基準で、KSPの回転物理座標系では惑星の自転を含めます。
 
-`--disable-ground-truth`を付けると、真値パケットを破棄し、真値Topicと`pylon_ground_truth_enu -> base_link`を配信しません。この場合の機体IDとlifecycleはIMUパケットから生成し、`origin_sequence`はセンサー機体の世代です。LiDAR＋IMUだけで動く[デブリ周回デモ](../../Demo/pylon_demo_debris_orbit/README.md)の検証に使用します。
+`--disable-ground-truth`を付けると、真値パケットを破棄し、真値Topicと`pylon_ground_truth_enu -> base_link`を配信しません。機体IDとlifecycleは独立したセッションheartbeatから生成し、`origin_sequence`はROS側のセッション世代です。LiDAR＋IMUだけで動く[デブリ周回デモ](../../Demo/pylon_demo_debris_orbit/README.md)の検証に使用します。
 
-センサーtimestampは初回のKSP universal timeとROS時計のoffsetを固定して対応付けます。遅延した画像や物理時間の進みの遅さでoffsetを変更するとジャイロ積分に架空の時間差が入るため、飛行中は補正しません。IMUで機体切替や時刻の巻き戻りを検知した際に初期化します。受信timeoutは別途wall timeで判定します。
+センサーtimestampは初回のKSP universal timeとROS時計のoffsetを固定して対応付けます。遅延した画像や物理時間の進みの遅さでoffsetを変更するとジャイロ積分に架空の時間差が入るため、飛行中は補正しません。セッションheartbeatで機体切替や時刻の巻き戻りによるepoch変更を検知した際に初期化します。受信timeoutは単調時計で判定します。
 - 2D LiDAR: `sensor_msgs/msg/LaserScan`
 - 3D LiDAR: `sensor_msgs/msg/PointCloud2`
 - 2D Topic: `/ksp_vessel/lidar_2d/<sensor_id>/scan`
@@ -54,7 +54,7 @@ colcon build --packages-up-to pylon_bridge
 source install/setup.bash
 ```
 
-Humbleでビルド済みのworkspaceを使う場合は、Python 3.10向けの`build`、`install`、`log`を削除してからJazzyで再ビルドしてください。
+Humbleなど別のROS版でビルドしたworkspaceと共用せず、Jazzy用のworkspaceを用意してください。初回導入は[Getting Started](../../docs/guide/getting-started.md)を参照してください。
 
 ## Run
 

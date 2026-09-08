@@ -17,6 +17,7 @@ export default defineConfig({
   themeConfig: {
     siteTitle: 'PyLoN API',
     nav: [
+      { text: 'Getting Started', link: '/guide/getting-started' },
       { text: 'ガイド', link: '/guide/overview' },
       { text: 'Topic API', link: '/api/topics' },
       { text: 'パーツ', link: '/parts/lidar' },
@@ -27,9 +28,9 @@ export default defineConfig({
       {
         text: 'はじめに',
         items: [
+          { text: 'Getting Started', link: '/guide/getting-started' },
           { text: 'システム概要', link: '/guide/overview' },
           { text: 'モノレポ設計', link: '/guide/architecture' },
-          { text: '起動手順', link: '/guide/getting-started' },
           { text: '月面ローバーとNav2', link: '/guide/nav2' },
           { text: '設計課題と責務', link: '/guide/refactor-lessons' },
           { text: 'PyLoNへの移行', link: '/reference/migration' }
