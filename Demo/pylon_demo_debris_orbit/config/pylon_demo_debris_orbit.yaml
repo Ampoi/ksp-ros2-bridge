@@ -1,0 +1,126 @@
+pylon_demo_debris_orbit:
+  ros__parameters:
+    # 誤作動防止のため、launch時に enabled:=true を明示する。
+    enabled: false
+
+    # 機体・搭載センサーとの紐付け。VAB/SPHで設定したSensor IDに合わせる。
+    # デモ出力のnamespace。KSP機体を選択するIDではない。
+    demo_instance_id: demo_vehicle
+    lidar_sensor_id: front_lidar
+    camera_sensor_id: orbit_camera
+    vessel_topic_prefix: /ksp_vessel
+
+    # 個別Topicを空以外にするとvessel_topic_prefixからの自動解決より優先する。
+    camera_topic: ""
+    pose_topic: ""
+    twist_topic: ""
+    setpoint_topic: ""
+    status_topic: ""
+    world_frame: pylon_debris_inertial
+    body_frame: base_link
+
+    # 周回軌道。orbit_directionは+1/-1、normalはworld_frame基準。
+    orbit_radius: 15.0
+    max_position_step: 2.0
+    angular_speed_deg_s: 1.0
+    orbit_direction: 1
+    orbit_plane_normal: [0.0, 0.0, 1.0]
+
+    # 高速回転中は目標指向を行わず、デタンブル指令を先に出す。
+    detumble_enter_rate_deg_s: 6.0
+    detumble_exit_rate_deg_s: 2.0
+
+    # 対象喪失時は最後の視線を中心に、LiDAR前方半球を広く再探索する。
+    # 長周期のsin波で往復し、4deg/sの姿勢上限にも追従できる速さにする。
+    search_start_delay_sec: 0.3
+    search_yaw_amplitude_deg: 180.0
+    search_pitch_amplitude_deg: 20.0
+    search_period_sec: 300.0
+    search_memory_timeout_sec: 30.0
+    # 円周へ収束し、この条件を満たした時点を撮影角0度とする。
+    arrival_position_tolerance: 1.5
+    arrival_speed_tolerance: 0.25
+    arrival_attitude_tolerance_deg: 5.0
+
+    # 共通の相対位置・相対速度入力。位置推定は別ノードで行う。
+    target_source: lidar_imu
+    target_topic: ""
+    lidar_frame: ""
+    target_acquisition_samples: 3
+    translation_pointing_tolerance_deg: 8.0
+    state_timeout_sec: 1.0
+    target_timeout_sec: 1.0
+    control_rate_hz: 20.0
+
+    # 0, 36, ... 324度で10枚。既定では周回ごとに撮影を続ける。
+    capture_step_deg: 36.0
+    capture_count: 10
+    capture_tolerance_deg: 2.0
+    stop_after_capture: false
+    output_directory: pylon_demo_debris_orbit_captures
+
+pylon_debris_target_estimator:
+  ros__parameters:
+    target_source: lidar_imu
+    vessel_topic_prefix: /ksp_vessel
+    min_target_range: 1.0
+    max_target_range: 250.0
+    lidar_sensor_id: front_lidar
+    voxel_size: 0.15
+    cluster_tolerance: 1.5
+    cluster_min_points: 3
+    max_points: 4000
+    max_off_axis_deg: 85.0
+    max_cluster_extent: 10.0
+    target_cluster_index: 0
+    target_center_offset: 0.0
+    measurement_sigma: 0.25
+    acceleration_sigma: 0.5
+    target_max_jump: 3.0
+    target_max_relative_speed: 5.0
+    target_timeout_sec: 1.0
+    transform_wait_timeout_sec: 0.5
+    orbit_radius: 15.0
+    orbit_plane_normal: [0.0, 0.0, 1.0]
+
+pylon_demo_debris_orbit_controller:
+  ros__parameters:
+    # 共通制御パッケージ。lifecycleのvessel_idへleaseを取得してから指令する。
+    controller_id: pylon_demo_debris_orbit_demo
+    extrapolate_setpoint: true
+    vessel_topic_prefix: /ksp_vessel
+    pose_topic: ""
+    twist_topic: ""
+    setpoint_topic: ""
+    wrench_command_topic: ""
+    authority_command_topic: ""
+    authority_state_topic: ""
+    vessel_lifecycle_topic: ""
+    controller_status_topic: ""
+    world_frame: pylon_debris_inertial
+    body_frame: base_link
+
+    control_priority: 100
+    lease_duration_sec: 2.0
+    lease_renew_period_sec: 0.5
+    suppress_sas: true
+    command_timeout_sec: 0.25
+
+    # 機体ごとに調整するSI単位のPDゲインとリミット（N, N*m）。
+    # test AではRCS定格に対して余裕を取り、接近時の燃料消費を抑える。
+    position_kp: 500.0
+    velocity_kd: 2000.0
+    attitude_kp: 800.0
+    angular_kd: 4000.0
+    max_force: 2000.0
+    max_torque: 250.0
+    # 探索・対象取得中の姿勢保持は低トルクに制限する。
+    attitude_hold_max_torque: 150.0
+    # この角速度を超えると姿勢誤差より制動を優先する。
+    attitude_hold_rate_limit_deg_s: 4.0
+    detumble_kd: 1000.0
+    detumble_max_torque: 500.0
+    command_ramp_sec: 3.0
+    state_timeout_sec: 1.0
+    setpoint_timeout_sec: 1.0
+    control_rate_hz: 20.0

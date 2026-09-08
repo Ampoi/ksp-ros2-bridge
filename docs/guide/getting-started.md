@@ -4,45 +4,19 @@
 
 ## 1. ビルドと同期
 
-リポジトリのルートで実行します。
+KSP 1.x、.NET SDK、ROS2 Jazzy、colcon、rsyncを準備します。KSP本体のDLLはビルド時の参照にのみ使用します。
 
 ```bash
 ./sync.sh
-```
-
-このスクリプトは次を順番に行います。
-
-1. KSPプラグインDLLをReleaseビルド
-2. `GameData/KerbalLiDAR`をKSPの`GameData`へ同期
-3. `Ros2`のinterfaces、bridge、共通機体制御、Nav2 packageと`Demo`をROS2 workspaceへ同期
-4. 同期したROS2 packageを依存順に`colcon build`
-
-既定パスと異なる場合は環境変数で指定します。
-
-```bash
-KSPDIR="/path/to/Kerbal Space Program" \
-ROS2_WS="$HOME/ros2_ws" \
-ROS_SETUP="/opt/ros/jazzy/setup.bash" \
-./sync.sh
-```
-
-`sync.sh`はsource後の`ROS_DISTRO`も検査し、Jazzy以外の環境を誤って使った場合はビルド前に停止します。
-
-::: details 手動でROS2 bridgeだけを配置する場合
-```bash
-mkdir -p ~/ros2_ws/src
-cp -r Ros2/ksp_ros2_interfaces ~/ros2_ws/src/
-cp -r Ros2/ksp_lidar_bridge ~/ros2_ws/src/
-cp -r Ros2/ksp_vehicle_control ~/ros2_ws/src/
-cp -r Ros2/ksp_nav2_bringup ~/ros2_ws/src/
-cd ~/ros2_ws
+# 必要なデモだけ追加
+./sync.sh --demo mun_rover
+# すべてのデモ
+./sync.sh --all-demos
 source /opt/ros/jazzy/setup.bash
-rosdep install --from-paths src --ignore-src --rosdistro jazzy -y
-colcon build --packages-up-to ksp_lidar_bridge ksp_vehicle_control ksp_nav2_bringup
+source ~/ros2_ws/install/setup.bash
 ```
-:::
 
-Humbleで使っていた同じworkspaceをJazzyへ移行する場合、Python 3.10向け生成物を再利用しないでください。最初のJazzyビルド前にworkspaceの`build`、`install`、`log`を削除してから、上記コマンドで再ビルドします。`src`内のパッケージはそのまま利用できます。
+本体は`pylon_interfaces`・`pylon_bridge`・`pylon_vehicle_control`の3パッケージです。デモ選択時だけNav2や点群処理などの依存が必要になります。以前のインストールからの変更は[移行](../reference/migration.md)を先に実施してください。
 
 ## 2. ROS2 bridgeを起動
 
@@ -51,13 +25,13 @@ Humbleで使っていた同じworkspaceをJazzyへ移行する場合、Python 3.
 ```bash
 source /opt/ros/jazzy/setup.bash
 source ~/ros2_ws/install/setup.bash
-ros2 run ksp_lidar_bridge udp_bridge --host 127.0.0.1 --port 49010
+ros2 run pylon_bridge udp_bridge --host 127.0.0.1 --port 49010
 ```
 
 起動直後にbridgeは`listening`をpublishします。
 
 ```bash
-ros2 topic echo --once /ros2_ksp/status
+ros2 topic echo --once /pylon/status
 ```
 
 期待値:
@@ -96,26 +70,32 @@ ros2 topic list | grep '^/ksp_vessel/actuators/'
 bridgeからKSPへ返す指令先を指定します。
 
 ```bash
-ros2 run ksp_lidar_bridge udp_bridge \
+ros2 run pylon_bridge udp_bridge \
   --host 0.0.0.0 \
   --port 49010 \
   --command-host 192.168.1.50 \
   --command-port 49011
 ```
 
-KSP側の各センサー・モーター設定もbridgeホストへ合わせてください。active vesselのURDFを別ホストへ流す場合に限り、KSP側`allowRemoteUrdf = true`とbridge側`--allow-remote-models`の両方が必要です。信頼できるネットワーク内だけで有効にしてください。
+KSP側の共通設定`PYLON_TRANSPORT.stateHost`をbridgeホストへ合わせてください。active vesselのURDFを別ホストへ流す場合に限り、KSP側`allowRemoteUrdf = true`とbridge側`--allow-remote-models`の両方が必要です。信頼できるネットワーク内だけで有効にしてください。
 
 ## ドキュメントをローカル起動
 
+リポジトリのルートから次を実行します。
+
 ```bash
-npm install
-npm run docs:dev
+cd docs
+pnpm install
+pnpm run docs:dev
 ```
 
 本番相当の静的ビルドは次のコマンドです。
 
 ```bash
-npm run docs:build
+pnpm run docs:build
 ```
 
-ビルド結果をローカルで確認する場合は、続けて`npm run docs:preview`を実行します。これらはローカル操作だけで、デプロイは行いません。
+ビルド結果をローカルで確認する場合は、続けて`pnpm run docs:preview`を実行します。これらはローカル操作だけで、デプロイは行いません。
+
+
+Vercelで公開する場合は、プロジェクトのRoot Directoryを`docs`に設定します。CLIから操作する場合も`docs/`で実行してください。

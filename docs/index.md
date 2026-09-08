@@ -2,7 +2,7 @@
 layout: home
 
 hero:
-  name: Kerbal ROS2 API
+  name: PyLoN API
   text: KSPをROS2ロボットへ
   tagline: センサー、モーター、ホイール、推進系、機体WrenchとGround TruthをROS2から扱うための実装準拠リファレンス。
   actions:
@@ -34,7 +34,7 @@ features:
 
 ## まず確認するもの
 
-このドキュメントは、KSPプラグインのC#実装、各`part.cfg`、ROS2 bridgeのPython実装、`ksp_ros2_interfaces`のメッセージ定義を照合して作成しています。最初に[起動手順](/guide/getting-started)を実行し、次に[Topic一覧](/api/topics)から使用する入出力を確認してください。
+このドキュメントは、KSPプラグインのC#実装、各`part.cfg`、ROS2 bridgeのPython実装、`pylon_interfaces`のメッセージ定義を照合して作成しています。最初に[起動手順](/guide/getting-started)を実行し、次に[Topic一覧](/api/topics)から使用する入出力を確認してください。
 
 ::: tip kRPCは不要です
 KSPプラグインとROS2 bridgeはUDP JSONで直接通信します。kRPCサーバーや`krpc`クライアントライブラリは使用しません。

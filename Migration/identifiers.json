@@ -1,0 +1,42 @@
+{
+  "modules": {
+    "KerbalRosDockingCommand": "PyLoNDockingCommand",
+    "KerbalRosDockingManager": "PyLoNDockingManager",
+    "KerbalRosIdentityScenario": "PyLoNIdentityScenario",
+    "KerbalRosMotorCommand": "PyLoNMotorCommand",
+    "KerbalRosMotorNames": "PyLoNMotorNames",
+    "KerbalRosMotorCollisions": "PyLoNMotorCollisions",
+    "KerbalRosMotorVisuals": "PyLoNMotorVisuals",
+    "KerbalRosMotorJson": "PyLoNMotorJson",
+    "KerbalRosMotorUdpManager": "PyLoNMotorUdpManager",
+    "KerbalRosPartIdOverlay": "PyLoNPartIdOverlay",
+    "KerbalRosCommandEnvelope": "PyLoNCommandEnvelope",
+    "KerbalRosPropulsionModuleCommand": "PyLoNPropulsionModuleCommand",
+    "KerbalRosPropulsionCommand": "PyLoNPropulsionCommand",
+    "KerbalRosPropulsionManager": "PyLoNPropulsionManager",
+    "KerbalRosVehicleManager": "PyLoNVehicleManager",
+    "KerbalRosBodyWrenchCommand": "PyLoNBodyWrenchCommand",
+    "KerbalRosActuatorCommand": "PyLoNActuatorCommand",
+    "KerbalRosControlAuthorityCommand": "PyLoNControlAuthorityCommand",
+    "KerbalRosActuatorNames": "PyLoNActuatorNames",
+    "KerbalRosVesselModelManager": "PyLoNVesselModelManager",
+    "ModuleKerbalLidar": "ModulePyLoNLidar",
+    "ModuleKerbalRgbCamera": "ModulePyLoNRgbCamera",
+    "ModuleKerbalRosLinearMotor": "ModulePyLoNLinearMotor",
+    "ModuleKerbalRosSensorId": "ModulePyLoNSensorId",
+    "ModuleKerbalRosServo": "ModulePyLoNServo",
+    "ModuleKerbalStarTracker": "ModulePyLoNStarTracker"
+  },
+  "parts": {
+    "kerbal_lidar_2d": "pylon_lidar_2d",
+    "kerbal_lidar_3d": "pylon_lidar_3d",
+    "kerbal_rgb_camera": "pylon_rgb_camera",
+    "kerbal_ros_linear_motor_size0": "pylon_linear_motor_size0",
+    "kerbal_ros_servo_size0": "pylon_servo_size0",
+    "kerbal_star_tracker": "pylon_star_tracker"
+  },
+  "configs": {
+    "KERBAL_ROS2_CONTROL": "PYLON_CONTROL",
+    "KERBAL_ROS2_MODEL": "PYLON_MODEL"
+  }
+}

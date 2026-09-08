@@ -1,17 +1,17 @@
 # Topic一覧
 
-Topicは、操作中の機体に属するものを`/ksp_vessel`、bridgeプロセス自身に属するものを`/ros2_ksp`へ分けています。表の方向はROS2ノードから見た方向です。
+Topicは、操作中の機体に属するものを`/ksp_vessel`、bridgeプロセス自身に属するものを`/pylon`へ分けています。表の方向はROS2ノードから見た方向です。
 
 ## Bridge
 
 | 方向 | Topic | 型 | QoS / 内容 |
 |---|---|---|---|
-| Publish | `/ros2_ksp/status` | `std_msgs/msg/String` | Reliable / Transient Local。bridgeの稼働状態 |
-| Publish | `/ros2_ksp/diagnostics` | `diagnostic_msgs/msg/DiagnosticArray` | モーター診断とWrench配分残差 |
+| Publish | `/pylon/status` | `std_msgs/msg/String` | Reliable / Transient Local。bridgeの稼働状態 |
+| Publish | `/pylon/diagnostics` | `diagnostic_msgs/msg/DiagnosticArray` | モーター診断とWrench配分残差 |
 
 ## IMU
 
-センサーtimestampの間隔はKSPの物理時間を保持します。通信遅延やゲームの描画速度に合わせて飛行中にoffsetを飛ばしません。`udp_bridge --disable-ground-truth`ではIMUの機体IDからlifecycleを生成し、真値Topicとworld TFの配信を完全に無効化できます。このモードの`VesselLifecycle.world_frame`は空で、`origin_sequence`は機体切替・時刻巻き戻り・IMU timeout復帰時に更新される世代番号です。
+センサーtimestampの間隔はKSPの物理時間を保持します。通信遅延やゲームの描画速度に合わせて飛行中にoffsetを飛ばしません。lifecycleはセンサーと独立したセッションheartbeatから生成します。`udp_bridge --disable-ground-truth`では真値Topicとworld TFの配信を完全に無効化できます。このモードの`VesselLifecycle.world_frame`は空です。`runtime_instance`・`runtime_epoch`・`runtime_generation`がKSP側のセッションを表し、`generation`と`origin_sequence`は機体切替・時刻巻き戻り・セッションtimeoutからの復帰時に更新されるROS側の世代番号です。
 
 全機体で追加パーツ・設定なしに、操作中の機体の3軸ジャイロと3軸加速度計を出力します。機体切替時も同じTopicを使用します。
 
@@ -27,7 +27,7 @@ Topicは、操作中の機体に属するものを`/ksp_vessel`、bridgeプロ�
 
 | 方向 | Topic | 型 | 内容 |
 |---|---|---|---|
-| Publish | `/ksp_vessel/star_tracker/<id>/state` | `ksp_ros2_interfaces/msg/StarTrackerState` | 姿勢・共分散・valid・測定不能理由を同時配信 |
+| Publish | `/ksp_vessel/star_tracker/<id>/state` | `pylon_interfaces/msg/StarTrackerState` | 姿勢・共分散・valid・測定不能理由を同時配信 |
 | Publish | `/ksp_vessel/star_tracker/<id>/attitude` | `geometry_msgs/msg/QuaternionStamped` | 有効な慣性姿勢のみ |
 
 専用パーツを取り付けると既定5 Hz、Reliable / Volatile / depth 10で配信します。位置は測定しません。`state.valid=false`時はquaternionが全0、共分散先頭が−1です。通信断でも`stale`状態を通知します。座標・制約・再捕捉・Topicの寿命は[スタートラッカー](../parts/star-tracker.md)を参照してください。
@@ -42,7 +42,7 @@ Topicは、操作中の機体に属するものを`/ksp_vessel`、bridgeプロ�
 | Subscribe | `/ksp_vessel/control/wrench_command` | `BodyWrenchCommand` | Reliable。lease-bound `base_link` Wrench |
 | Publish | `/ksp_vessel/control/wrench_feedback` | `WrenchFeedback` | requested / allocated / achieved / residual |
 | Publish | `/ksp_vessel/ground_truth/pose` | `geometry_msgs/msg/PoseStamped` | Best Effort。ENU位置・姿勢 |
-| Publish | `/ksp_vessel/ground_truth/nearby_vessels` | `ksp_ros2_interfaces/msg/NearbyVessels` | 自機と近隣機体の同時刻・同原点の絶対位置と速度。最大32機、2500 m以内、同天体・loaded/unpacked |
+| Publish | `/ksp_vessel/ground_truth/nearby_vessels` | `pylon_interfaces/msg/NearbyVessels` | 自機と近隣機体の同時刻・同原点の絶対位置と速度。最大32機、2500 m以内、同天体・loaded/unpacked |
 | Publish | `/ksp_vessel/ground_truth/twist` | `geometry_msgs/msg/TwistStamped` | Best Effort。ENU速度 |
 | Publish | `/ksp_vessel/ground_truth/twist_body` | `geometry_msgs/msg/TwistStamped` | Best Effort。body速度 |
 | Publish | `/ksp_vessel/ground_truth/frame_angular_velocity` | `geometry_msgs/msg/Vector3Stamped` | 惑星固定ENU軸の慣性系に対する回転角速度。評価器が慣性推定と比較するための情報 |
@@ -82,24 +82,12 @@ LiDARとRGBカメラのIDはVAB/SPHの`Edit ROS2 Sensor ID`で設定します。
 
 正式commandはauthority leaseと`vessel_id / controller_id / lease_id / sequence`が必要です。commandはReliable / Volatile / depth 10です。通常のstateはBest Effort / Volatile / depth 10、分離stateはReliable / Transient Local / depth 10です。
 
-### 集約操作（legacy互換、既定無効）
-
-次の所有権を持たない入力は、bridgeへ`--enable-legacy-control`を付けた場合だけ購読されます。新規実装ではlease付きの型付きcommandを使用してください。
-
-| 方向 | Topic | 型 | 内容 |
-|---|---|---|---|
-| Subscribe | `/ksp_vessel/actuators/servo/trajectory` | `trajectory_msgs/msg/JointTrajectory` | 複数サーボの軌道指令 |
-| Subscribe | `/ksp_vessel/actuators/propulsion/main_throttle` | `std_msgs/msg/Float64` | メインスロットル |
-| Subscribe | `/ksp_vessel/actuators/rcs/twist_command` | `geometry_msgs/msg/Twist` | RCS 6軸指令 |
-| Subscribe | `/ksp_vessel/actuators/propulsion/json_command` | `std_msgs/msg/String` | 旧JSON個別指令 |
-| Publish | `/ksp_vessel/actuators/propulsion/json_state` | `std_msgs/msg/String` | 旧JSON状態 |
-
 ## ドッキングポート
 
 | 方向 | Topic | 型 |
 |---|---|---|
-| Publish | `/ksp_vessel/docking_ports/<id>/state` | `ksp_ros2_interfaces/msg/DockingPortState` |
-| Subscribe | `/ksp_vessel/docking_ports/<id>/command` | `ksp_ros2_interfaces/msg/DockingPortCommand` |
+| Publish | `/ksp_vessel/docking_ports/<id>/state` | `pylon_interfaces/msg/DockingPortState` |
+| Subscribe | `/ksp_vessel/docking_ports/<id>/command` | `pylon_interfaces/msg/DockingPortCommand` |
 
 `<id>`の既定値は`docking_port_<persistentId>_<moduleIndex>`です。commandは`SELECT_CAMERA`、`STOP_CAMERA`、`RELEASE`を提供します。
 
@@ -108,15 +96,13 @@ LiDARとRGBカメラのIDはVAB/SPHの`Edit ROS2 Sensor ID`で設定します。
 | 対象 | 引数 | 既定値 |
 |---|---|---|
 | 機体センサー | `--topic-prefix` | `/ksp_vessel` |
-| bridge状態 | `--bridge-prefix` | `/ros2_ksp` |
-| 診断 | `--diagnostics-topic` | `/ros2_ksp/diagnostics` |
+| bridge状態 | `--bridge-prefix` | `/pylon` |
+| 診断 | `--diagnostics-topic` | `/pylon/diagnostics` |
 | Wrench command | `--body-wrench-command-topic` | `/ksp_vessel/control/wrench_command` |
 | Authority command | `--control-authority-command-topic` | `/ksp_vessel/control/authority/command` |
 | Authority state | `--control-authority-state-topic` | `/ksp_vessel/control/authority/state` |
 | Wrench feedback | `--wrench-feedback-topic` | `/ksp_vessel/control/wrench_feedback` |
 | Vessel lifecycle | `--vessel-lifecycle-topic` | `/ksp_vessel/lifecycle` |
-| 旧Body Wrench | `--body-wrench-topic` | 空（無効） |
-| legacy集約制御 | `--enable-legacy-control` | false（無効） |
 | Ground Truth | `--ground-truth-prefix` | `/ksp_vessel/ground_truth` |
 | アクチュエータ | `--actuators-prefix` | `/ksp_vessel/actuators` |
 | ドッキングポート | `--docking-ports-prefix` | `/ksp_vessel/docking_ports` |
@@ -124,4 +110,4 @@ LiDARとRGBカメラのIDはVAB/SPHの`Edit ROS2 Sensor ID`で設定します。
 | URDF | `--robot-description-topic` | `/ksp_vessel/robot_description` |
 | root frame | `--root-frame-topic` | `/ksp_vessel/root_frame` |
 
-全オプションは`ros2 run ksp_lidar_bridge udp_bridge --help`で確認できます。
+全オプションは`ros2 run pylon_bridge udp_bridge --help`で確認できます。

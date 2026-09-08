@@ -6,14 +6,13 @@
 
 | ディレクトリ | 責務 |
 |---|---|
-| `Source/KerbalLiDAR/Domain` | RCS配分、制御所有権、安全制限などの純粋なルール |
-| `Source/KerbalLiDAR/Application` | KSP内で制御ユースケースを組み立てる層 |
-| `Source/KerbalLiDAR/Api/Ksp` | KSP/Unity、UDP、PartModuleのadapter |
-| `Ros2/ksp_ros2_interfaces` | KSPとROS2アプリ間の明示的な契約 |
-| `Ros2/ksp_lidar_bridge/domain` | UDP packet検証とKSP時刻整合 |
-| `Ros2/ksp_lidar_bridge/udp_bridge.py` | UDP・ROS2・QoS・TFのadapter |
-| `Ros2/ksp_vehicle_control` | 再利用可能な6DoF制御domainとlease workflow |
-| `Ros2/ksp_nav2_bringup` | SLAM/Nav2固有のintegration adapter |
+| `Source/PyLoN/Domain` | RCS配分、制御所有権、安全制限などの純粋なルール |
+| `Source/PyLoN/Application` | KSP内で制御ユースケースを組み立てる層 |
+| `Source/PyLoN/Api/Ksp` | KSP/Unity、UDP、PartModuleのadapter |
+| `Ros2/pylon_interfaces` | KSPとROS2アプリ間の明示的な契約 |
+| `Ros2/pylon_bridge/pylon_bridge/domain` | UDP packet検証とKSP時刻整合 |
+| `Ros2/pylon_bridge/pylon_bridge/services` | 単一ノードへ合成する通信・セッション・センサー・モデル・制御サービス |
+| `Ros2/pylon_vehicle_control` | 再利用可能な6DoF制御domainとlease workflow |
 | `Demo` | 公開APIだけを使う実行例。共通制御は置かない |
 | `build.sh` / `build.ps1` / `sync.sh` | 公開ソースだけで完結する本番ビルド・同期 |
 | `Development`（ローカル専用・Git対象外） | デバッグ補助、検証コード、記録、モデル編集元 |
@@ -37,8 +36,8 @@ RCSは「総最大推力で割る」方式ではなく、現在有効な各ノ�
 
 | TF / Topic | 扱い |
 |---|---|
-| `ground_truth_enu -> base_link` | KSP universal time基準のdynamic TF |
-| `base_link -> ksp_<vessel-id>_link_0000` | 重心変化を含むdynamic TF |
+| `pylon_ground_truth_enu -> base_link` | KSP universal time基準のdynamic TF |
+| `base_link -> pylon_<vessel-id>_link_0000` | 重心変化を含むdynamic TF |
 | proxyの固定joint | `/tf_static` |
 | part link -> sensor frame | Sensor ID由来の安定名を持つ`/tf_static` |
 | `/ksp_vessel/lifecycle` | `UNAVAILABLE / ACTIVE / CHANGED / STALE`と実`vessel_id` |

@@ -15,12 +15,12 @@ __pycache__/
 node_modules/
 docs/.vitepress/cache/
 docs/.vitepress/dist/
-GameData/KerbalLiDAR/Plugins/*.dll
-GameData/KerbalLiDAR/Plugins/*.pdb
+GameData/PyLoN/Plugins/*.dll
+GameData/PyLoN/Plugins/*.pdb
 .vercel
 .env*
 
-/debris_orbit_captures/
+/pylon_demo_debris_orbit_captures/
 /Development/evidence/**/samples.jsonl
 
 # Local development sources, probes, evidence, authoring assets and old entrypoints.
@@ -31,6 +31,14 @@ GameData/KerbalLiDAR/Plugins/*.pdb
 /DEBUG_LAUNCH.md
 /log/
 /.demo-output/
+/pylon_demo_debris_orbit_captures.zip
+/Source/PyLoN/**/Debug*.cs
+/Source/PyLoN/**/PyLoNFinSupport.cs
+
+# pnpm dependency cache
+.pnpm-store/
+
+# Original local captures remain private after the rename.
+/debris_orbit_captures/
 /debris_orbit_captures.zip
-/Source/KerbalLiDAR/**/Debug*.cs
-/Source/KerbalLiDAR/**/KerbalRosFinSupport.cs
+.pytest_cache/

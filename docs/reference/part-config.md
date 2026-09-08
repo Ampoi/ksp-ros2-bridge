@@ -1,6 +1,6 @@
 # パーツ設定
 
-標準設定は`GameData/KerbalLiDAR/Parts/*/part.cfg`にあります。変更後はKSPを再起動してDLLとCFGを読み直してください。
+標準設定は`GameData/PyLoN/Parts/*/part.cfg`にあります。変更後はKSPを再起動してDLLとCFGを読み直してください。
 
 ## LiDAR共通
 
@@ -8,14 +8,12 @@
 |---|---|
 | `sensorMode` | `2D`または`3D` |
 | `horizontalLaserCount` | 2Dの水平ray数。UI上1〜2048 |
-| `verticalLaserCount` | legacy grid用の垂直ray数。UI上1〜128 |
+| `verticalLaserCount` | 矩形走査の垂直ray数。UI上1〜128 |
 | `horizontalFovDegrees` | 0〜360° |
 | `verticalFovDegrees` | 0〜180° |
 | `maxDistance` | 最大測距距離[m] |
 | `scanRateHz` | 1〜60 Hz |
 | `streamAt20Fps` | 有効時は`scanRateHz`を無視して20 Hz |
-| `partName` | Topicの`<part_name>`。最大64文字に正規化 |
-| `udpHost` / `udpPort` | bridgeの受信先。既定`127.0.0.1:49010` |
 | `udpEnabled` | UDP送信の有効・無効 |
 | `lidarEnabled` | Flightスキャンの有効・無効 |
 | `ignoreOwnVessel` | 自機collisionを除外 |
@@ -40,15 +38,20 @@
 | `longRangeMeters` | 250 | 150〜250 m |
 | `hemisphereDensity` | profile選択時に160 / 320 / 1024 | 1〜1024 rays/sr |
 
-## Active vessel URDF
+## 共通設定と機体モデル
 
-| Key | 既定値 | 内容 |
-|---|---:|---|
-| `activeVesselUrdfEnabled` | `true` | proxy送信 |
-| `activeVesselUrdfRefreshSeconds` | 2 | 再送間隔 |
-| `activeVesselUrdfChunkBytes` | 12000 | gzip後の1チャンクbyte |
-| `maxActiveVesselUrdfChunks` | 256 | 最大チャンク数 |
-| `allowRemoteUrdf` | `false` | loopback以外への送信許可 |
+`GameData/PyLoN/Config/Runtime.cfg`で管理します。センサーパーツの有無に依存しません。
+
+| Node | Key | 既定値 | 内容 |
+|---|---|---|---|
+| `PYLON_TRANSPORT` | `stateHost` / `statePort` | `127.0.0.1` / `49010` | bridgeへの送信先 |
+| `PYLON_TRANSPORT` | `commandPort` | `49011` | command受信port |
+| `PYLON_MODEL` | `enabled` | `true` | 機体モデル送信 |
+| `PYLON_MODEL` | `refreshSeconds` | `2` | 再送間隔 |
+| `PYLON_MODEL` | `chunkBytes` / `maxChunks` | `12000` / `256` | 圧縮モデル分割上限 |
+| `PYLON_MODEL` | `allowRemoteUrdf` | `false` | loopback以外への送信許可 |
+
+センサーIDは各パーツの`ModulePyLoNSensorId.sensorId`で設定します。ユーザーが設定したIDは改名しません。
 
 ## RGBカメラ
 
@@ -62,7 +65,6 @@
 | `frameChunkBytes` | 12000 | 1 UDP chunkのraw byte数 |
 | `maxFrameBytes` | 4194304 | raw RGB frame上限 |
 | `maxFrameChunks` | 512 | KSP側のchunk上限 |
-| `partName` | 空 | Topic名。空なら`rgb_camera` |
 | `cameraEnabled` / `udpEnabled` | `true` | capture / UDP送信 |
 | `cameraTiltDegrees` | `90` | 本体の上下首振り。0〜180°、craft／セーブに永続化 |
 | `cameraPivotTransformName` | `CameraPivot` | ローカルX軸で回転する本体。0°の基準回転はidentity |
@@ -75,9 +77,6 @@
 | Key | サーボ既定 | リニア既定 | 内容 |
 |---|---:|---:|---|
 | `motorName` | 空 | 空 | ROS joint名。空ならIDから生成 |
-| `commandUdpPort` | 49011 | 49011 | KSP側command bind port |
-| `stateUdpHost` | 127.0.0.1 | 127.0.0.1 | state送信先 |
-| `stateUdpPort` | 49010 | 49010 | state送信先port |
 | `stateRateHz` | 20 | 20 | state送信Hz。実行時1〜60へclamp |
 | `commandTimeoutSeconds` | 0.5 | 0.5 | velocity mode timeout |
 | 定格effort | `ratedEffortNm = 250` | `ratedEffortN = 4000` | effort上限 |

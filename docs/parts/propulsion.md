@@ -6,98 +6,10 @@ Flight中のactive vesselにあるKSP標準`ModuleEngines` / `ModuleEnginesFX`�
 
 | 方向 | Topic | 型 | 内容 |
 |---|---|---|---|
-| 入力 | `/ksp_vessel/actuators/propulsion/command` | `ksp_ros2_interfaces/msg/EngineCommand` | `id`で指定するEngine指令 |
-| 出力 | `/ksp_vessel/actuators/propulsion/state` | `ksp_ros2_interfaces/msg/EngineState` | `id`付きEngine状態 |
-| 入力 | `/ksp_vessel/actuators/rcs/command` | `ksp_ros2_interfaces/msg/RcsCommand` | `id`で指定するRCS指令 |
-| 出力 | `/ksp_vessel/actuators/rcs/state` | `ksp_ros2_interfaces/msg/RcsState` | `id`付きRCS状態 |
-| 入力 | `/ksp_vessel/actuators/propulsion/main_throttle` | `std_msgs/msg/Float64` | legacy互換メインスロットル`0.0..1.0` |
-| 入力 | `/ksp_vessel/actuators/rcs/twist_command` | `geometry_msgs/msg/Twist` | legacy互換RCS 6軸入力、各`-1.0..1.0` |
-| 入力 | `/ksp_vessel/actuators/propulsion/json_command` | `std_msgs/msg/String` | legacy互換JSON指令 |
-| 出力 | `/ksp_vessel/actuators/propulsion/json_state` | `std_msgs/msg/String` | 互換用JSON状態、10 Hz |
-
-## State JSON
-
-すべてのstateに共通するfieldです。
-
-| Field | 型 | 内容 |
-|---|---|---|
-| `type` | string | `ksp_propulsion_state` |
-| `version` | number | `1` |
-| `name` | string | `engine_<partFlightId>_<moduleIndex>`または`rcs_...` |
-| `kind` | string | `engine` / `rcs` |
-| `vessel` | string | active vessel名 |
-| `partFlightId` | number | KSP part ID |
-| `moduleIndex` | number | Part.Modules内のindex |
-| `universalTime` | number | KSP universal time |
-| `enabled` | boolean | Engine ignitedまたはRCS enabled |
-| `flameout` | boolean | flameout状態 |
-| `throttleLimit` | number | module固有の推力上限`0.0..1.0` |
-| `thrust` | number | 現在推力 |
-| `maxThrust` | number | 定格最大推力 |
-| `commandActive` | boolean | ROS overrideを保持中 |
-| `timedOut` | boolean | overrideがタイムアウト済み |
-
-Engineには`engineId`、`operational`、`throttleable`、`throttle`が追加されます。RCSには`active`と`thrusterCount`が追加されます。
-
-```bash
-ros2 topic echo /ksp_vessel/actuators/propulsion/json_state
-```
-
-## 個別モジュール指令
-
-この節から「RCS 6軸」までの入力は所有権を持たないlegacy互換APIで、既定では無効です。移行作業で必要な場合だけbridgeを`--enable-legacy-control`付きで起動してください。新規コードは後述の型付きTopicと[authority lease](/api/vehicle-control)を使用します。
-
-`String.data`にはJSON objectを入れます。複数moduleは`commands`配列へまとめられます。
-
-```bash
-ros2 topic pub -r 5 /ksp_vessel/actuators/propulsion/json_command std_msgs/msg/String \
-  '{data: "{\"commands\":[{\"name\":\"engine_12345_0\",\"kind\":\"engine\",\"enabled\":true,\"throttle\":0.65}],\"timeout\":0.5}"}'
-```
-
-| Field | 必須 | 内容 |
-|---|---|---|
-| `commands[].name` | 条件付き | stateの`name`。全対象は`*` |
-| `commands[].partFlightId` + `moduleIndex` | 条件付き | `name`の代わりにID指定 |
-| `commands[].kind` | 任意 | `engine` / `rcs`。省略時は両方を探索 |
-| `commands[].enabled` | 条件付き | Engine起動・停止、RCS module有効・無効 |
-| `commands[].throttle` | 条件付き | module固有推力`0.0..1.0` |
-| `commands[].release` | 条件付き | ROS overrideを解除し元の設定へ復帰 |
-| `timeout` | 任意 | 0.05〜10秒。既定0.5秒 |
-
-各commandには`enabled`、`throttle`、`release`のいずれかが必要です。
-
-全moduleのoverrideを解除します。
-
-```bash
-ros2 topic pub --once /ksp_vessel/actuators/propulsion/json_command std_msgs/msg/String \
-  '{data: "{\"commands\":[{\"name\":\"*\",\"release\":true}]}"}'
-```
-
-## メインスロットル
-
-```bash
-ros2 topic pub -r 5 /ksp_vessel/actuators/propulsion/main_throttle \
-  std_msgs/msg/Float64 '{data: 0.8}'
-```
-
-0.0〜1.0以外や非有限値はbridgeで拒否します。既定では最後の指令から0.5秒で0へ落ちます。
-
-## RCS 6軸
-
-```bash
-ros2 topic pub -r 5 /ksp_vessel/actuators/rcs/twist_command \
-  geometry_msgs/msg/Twist \
-  '{linear: {x: 0.0, y: 0.0, z: 1.0}, angular: {x: 0.0, y: 0.2, z: 0.0}}'
-```
-
-| Twist | KSP入力 |
-|---|---|
-| `linear.x` / `.y` / `.z` | X / Y / Z並進 |
-| `angular.x` | pitch |
-| `angular.y` | yaw |
-| `angular.z` | roll |
-
-受信中はRCSアクショングループを自動的に有効にします。タイムアウトまたはactive vessel切替時は6軸入力を0へ戻し、元のRCSアクショングループ状態を復元します。pitch / yaw / rollはKSP共通操舵軸のため、リアクションホイールや舵面も反応します。
+| 入力 | `/ksp_vessel/actuators/propulsion/command` | `pylon_interfaces/msg/EngineCommand` | `id`で指定するEngine指令 |
+| 出力 | `/ksp_vessel/actuators/propulsion/state` | `pylon_interfaces/msg/EngineState` | `id`付きEngine状態 |
+| 入力 | `/ksp_vessel/actuators/rcs/command` | `pylon_interfaces/msg/RcsCommand` | `id`で指定するRCS指令 |
+| 出力 | `/ksp_vessel/actuators/rcs/state` | `pylon_interfaces/msg/RcsState` | `id`付きRCS状態 |
 
 ## フェイルセーフとKSP制約
 
@@ -121,7 +33,7 @@ Engine IDは`engine_<persistentId>_<moduleIndex>`です。commandはReliable、s
 
 ```bash
 ros2 topic pub --once /ksp_vessel/actuators/propulsion/command \
-  ksp_ros2_interfaces/msg/EngineCommand \
+  pylon_interfaces/msg/EngineCommand \
   "{vessel_id: <vessel-id>, controller_id: manual, lease_id: <lease-id>, sequence: 2, id: engine_12345_0, enabled: true, target_thrust: 50.0, timeout_sec: 0.5}"
 ```
 
@@ -152,7 +64,7 @@ ros2 topic pub --once /ksp_vessel/actuators/propulsion/command \
 
 ```bash
 ros2 topic pub --once /ksp_vessel/actuators/propulsion/command \
-  ksp_ros2_interfaces/msg/EngineCommand \
+  pylon_interfaces/msg/EngineCommand \
   "{vessel_id: <vessel-id>, controller_id: manual, lease_id: <lease-id>, sequence: 3, id: engine_12345_0, enabled: true, target_thrust: 50000.0, has_gimbal_command: true, gimbal_pitch: 0.2, gimbal_yaw: -0.1, gimbal_roll: 0.0, timeout_sec: 0.5}"
 ```
 
@@ -166,7 +78,7 @@ ros2 topic pub --once /ksp_vessel/actuators/propulsion/command \
 
 TVC非対応エンジンは推力制御のみ動作し、`gimbal_available` はfalseです。複数のエンジンモードが同じジンバルを共有する場合、現在有効な指令のうち最大sequenceのTVC入力が優先され、stateは共有ハードウェアの指令を返します。Body Wrenchの自動配分はTVC角を最適化しません。TVCはこの個別Engine APIで指定してください。
 
-ROSメッセージ定義が変わるため、更新後はbridgeと利用側ノードを再起動し、同じ `ksp_ros2_interfaces` を使用してください。
+ROSメッセージ定義が変わるため、更新後はbridgeと利用側ノードを再起動し、同じ `pylon_interfaces` を使用してください。
 
 ## 型付きRCS Topic
 
@@ -184,7 +96,7 @@ RCS IDは`rcs_<persistentId>_<moduleIndex>`です。QoSはEngineと同じです�
 
 ```bash
 ros2 topic pub --once /ksp_vessel/actuators/rcs/command \
-  ksp_ros2_interfaces/msg/RcsCommand \
+  pylon_interfaces/msg/RcsCommand \
   "{vessel_id: <vessel-id>, controller_id: manual, lease_id: <lease-id>, sequence: 2, id: rcs_12345_1, enabled: true, thrust_limit: 2.0, timeout_sec: 0.5}"
 ```
 
@@ -201,10 +113,10 @@ ros2 topic pub --once /ksp_vessel/actuators/rcs/command \
 
 ## 実装確認先
 
-- `Source/KerbalLiDAR/Api/Ksp/KerbalRosPropulsionSupport.cs`
-- `Ros2/ksp_lidar_bridge/ksp_lidar_bridge/propulsion_packets.py`
-- `Ros2/ksp_lidar_bridge/ksp_lidar_bridge/udp_bridge.py`
-- `Ros2/ksp_ros2_interfaces/msg/EngineCommand.msg`
-- `Ros2/ksp_ros2_interfaces/msg/EngineState.msg`
-- `Ros2/ksp_ros2_interfaces/msg/RcsCommand.msg`
-- `Ros2/ksp_ros2_interfaces/msg/RcsState.msg`
+- `Source/PyLoN/Api/Ksp/PyLoNPropulsionSupport.cs`
+- `Ros2/pylon_bridge/pylon_bridge/propulsion_packets.py`
+- `Ros2/pylon_bridge/pylon_bridge/udp_bridge.py`
+- `Ros2/pylon_interfaces/msg/EngineCommand.msg`
+- `Ros2/pylon_interfaces/msg/EngineState.msg`
+- `Ros2/pylon_interfaces/msg/RcsCommand.msg`
+- `Ros2/pylon_interfaces/msg/RcsState.msg`

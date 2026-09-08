@@ -6,8 +6,8 @@ Flight中のactive vesselにある通常・ラジアルデカプラーと手動�
 
 | 方向 | Topic | 型 | QoS |
 |---|---|---|---|
-| 入力 | `/ksp_vessel/actuators/separation/command` | `ksp_ros2_interfaces/msg/SeparationCommand` | Reliable / Volatile / depth 10 |
-| 出力 | `/ksp_vessel/actuators/separation/state` | `ksp_ros2_interfaces/msg/SeparationState` | Reliable / Transient Local / depth 10 |
+| 入力 | `/ksp_vessel/actuators/separation/command` | `pylon_interfaces/msg/SeparationCommand` | Reliable / Volatile / depth 10 |
+| 出力 | `/ksp_vessel/actuators/separation/state` | `pylon_interfaces/msg/SeparationState` | Reliable / Transient Local / depth 10 |
 
 IDは`decoupler_<persistentId>_<moduleIndex>`または`fairing_<persistentId>_<moduleIndex>`です。stateの`id`で確認できます。
 
@@ -33,13 +33,13 @@ ros2 topic echo /ksp_vessel/actuators/separation/state
 
 ```bash
 ros2 topic pub --once /ksp_vessel/actuators/separation/command \
-  ksp_ros2_interfaces/msg/SeparationCommand \
+  pylon_interfaces/msg/SeparationCommand \
   '{vessel_id: <vessel-id>, controller_id: manual, lease_id: <lease-id>, sequence: 2, id: decoupler_12345_0, separate: true}'
 ```
 
 ```bash
 ros2 topic pub --once /ksp_vessel/actuators/separation/command \
-  ksp_ros2_interfaces/msg/SeparationCommand \
+  pylon_interfaces/msg/SeparationCommand \
   '{vessel_id: <vessel-id>, controller_id: manual, lease_id: <lease-id>, sequence: 3, id: fairing_67890_1, separate: true}'
 ```
 

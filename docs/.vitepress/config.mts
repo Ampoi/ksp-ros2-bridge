@@ -2,20 +2,20 @@ import { defineConfig } from 'vitepress'
 
 export default defineConfig({
   lang: 'ja-JP',
-  title: 'Kerbal ROS2 API',
-  description: 'KerbalLiDAR KSP mod と ROS2 bridge の起動・Topic・パーツ設定リファレンス',
+  title: 'PyLoN API',
+  description: 'PyLoN KSP mod と ROS2 bridge の起動・Topic・パーツ設定リファレンス',
   cleanUrls: true,
   lastUpdated: true,
   head: [
     ['meta', { name: 'theme-color', content: '#071b2f' }],
-    ['meta', { property: 'og:title', content: 'Kerbal ROS2 API' }],
+    ['meta', { property: 'og:title', content: 'PyLoN API' }],
     ['meta', { property: 'og:description', content: 'KSP 1.x と ROS2 をつなぐセンサー・ロボティクスAPIドキュメント' }]
   ],
   markdown: {
     lineNumbers: true
   },
   themeConfig: {
-    siteTitle: 'Kerbal ROS2 API',
+    siteTitle: 'PyLoN API',
     nav: [
       { text: 'ガイド', link: '/guide/overview' },
       { text: 'Topic API', link: '/api/topics' },
@@ -30,7 +30,9 @@ export default defineConfig({
           { text: 'システム概要', link: '/guide/overview' },
           { text: 'モノレポ設計', link: '/guide/architecture' },
           { text: '起動手順', link: '/guide/getting-started' },
-          { text: '2D LiDAR MappingとNav2', link: '/guide/nav2' }
+          { text: '月面ローバーとNav2', link: '/guide/nav2' },
+          { text: '設計課題と責務', link: '/guide/refactor-lessons' },
+          { text: 'PyLoNへの移行', link: '/reference/migration' }
         ]
       },
       {
@@ -86,7 +88,7 @@ export default defineConfig({
     },
     footer: {
       message: 'KSP mod と ROS2 bridge の実装に基づくリファレンス',
-      copyright: 'Kerbal LiDAR Lab'
+      copyright: 'PyLoN'
     }
   }
 })

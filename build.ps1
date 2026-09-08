@@ -31,8 +31,8 @@ $env:NUGET_PACKAGES = Join-Path $PSScriptRoot ".nuget\packages"
 $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1"
 $env:DOTNET_NOLOGO = "1"
 
-$projectPath = Join-Path $PSScriptRoot "Source\KerbalLiDAR\KerbalLiDAR.csproj"
-$assetsPath = Join-Path $PSScriptRoot "Source\KerbalLiDAR\obj\project.assets.json"
+$projectPath = Join-Path $PSScriptRoot "Source\PyLoN\PyLoN.csproj"
+$assetsPath = Join-Path $PSScriptRoot "Source\PyLoN\obj\project.assets.json"
 $nugetConfigPath = Join-Path $PSScriptRoot "NuGet.Config"
 $restoreArgs = @()
 if ((Test-Path $assetsPath) -and
@@ -47,14 +47,14 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
-$pluginDir = Join-Path $PSScriptRoot "GameData\KerbalLiDAR\Plugins"
+$pluginDir = Join-Path $PSScriptRoot "GameData\PyLoN\Plugins"
 New-Item -ItemType Directory -Force -Path $pluginDir | Out-Null
 
-$pluginDll = Join-Path $pluginDir "KerbalLiDAR.dll"
-$pluginPdb = Join-Path $pluginDir "KerbalLiDAR.pdb"
-$objDir = Join-Path $PSScriptRoot "Source\KerbalLiDAR\obj\$Configuration"
-$objDll = Join-Path $objDir "KerbalLiDAR.dll"
-$objPdb = Join-Path $objDir "KerbalLiDAR.pdb"
+$pluginDll = Join-Path $pluginDir "PyLoN.dll"
+$pluginPdb = Join-Path $pluginDir "PyLoN.pdb"
+$objDir = Join-Path $PSScriptRoot "Source\PyLoN\obj\$Configuration"
+$objDll = Join-Path $objDir "PyLoN.dll"
+$objPdb = Join-Path $objDir "PyLoN.pdb"
 
 if (-not (Test-Path $pluginDll) -and (Test-Path $objDll)) {
     Copy-Item -Force $objDll $pluginDll
@@ -64,5 +64,5 @@ if (-not (Test-Path $pluginPdb) -and (Test-Path $objPdb)) {
     Copy-Item -Force $objPdb $pluginPdb
 }
 
-Write-Host "KerbalLiDAR mod folder is ready at: $((Join-Path $PSScriptRoot 'GameData\KerbalLiDAR'))"
+Write-Host "PyLoN mod folder is ready at: $((Join-Path $PSScriptRoot 'GameData\PyLoN'))"
 exit 0

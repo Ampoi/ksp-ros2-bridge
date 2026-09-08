@@ -1,13 +1,13 @@
 # 2D / 3D LiDAR
 
-2種類のLiDARは同じ`ModuleKerbalLidar`を使用し、`sensorMode`に応じて異なるROS2メッセージへ変換されます。どちらもROSセンサー座標の`+X`前方、`+Z`上方です。
+2種類のLiDARは同じ`ModulePyLoNLidar`を使用し、`sensorMode`に応じて異なるROS2メッセージへ変換されます。どちらもROSセンサー座標の`+X`前方、`+Z`上方です。
 
 ## 入出力Topic
 
 | パーツ | 入力Topic | 出力Topic | 型 |
 |---|---|---|---|
-| Kerbal LiDAR 2D | なし | `/ksp_vessel/lidar_2d/<lidar_2d_id>/scan` | `sensor_msgs/msg/LaserScan` |
-| Kerbal LiDAR 3D | なし | `/ksp_vessel/lidar_3d/<lidar_3d_id>/points` | `sensor_msgs/msg/PointCloud2` |
+| PyLoN LiDAR 2D | なし | `/ksp_vessel/lidar_2d/<lidar_2d_id>/scan` | `sensor_msgs/msg/LaserScan` |
+| PyLoN LiDAR 3D | なし | `/ksp_vessel/lidar_3d/<lidar_3d_id>/points` | `sensor_msgs/msg/PointCloud2` |
 
 ## 2D LaserScan
 
@@ -67,7 +67,7 @@ active vesselモデルと`partFlightId`が対応した場合、`frame_id`は機�
 <frame_prefix>_<sensor_id>_lidar
 ```
 
-既定の`frame_prefix`は`ros2_ksp`です。
+既定の`frame_prefix`は`pylon`です。
 
 ## 実装確認先
 
@@ -75,7 +75,7 @@ active vesselモデルと`partFlightId`が対応した場合、`frame_id`は機�
 
 旧モデルの取付座標は維持しています。新しい光学部に合わせ、2Dのray原点はパーツローカル`(0, 0, -0.032)`、3Dはドーム頂点の2mm外側`(0, 0, 0.059)`へ変更しています。3Dの計測方向は従来のFibonacci半球配置です。
 
-- `GameData/KerbalLiDAR/Parts/Lidar2D/part.cfg`
-- `GameData/KerbalLiDAR/Parts/Lidar3D/part.cfg`
-- `Source/KerbalLiDAR/Api/Ksp/ModuleKerbalLidar.cs`
-- `Ros2/ksp_lidar_bridge/ksp_lidar_bridge/packet_conversion.py`
+- `GameData/PyLoN/Parts/Lidar2D/part.cfg`
+- `GameData/PyLoN/Parts/Lidar3D/part.cfg`
+- `Source/PyLoN/Api/Ksp/ModulePyLoNLidar.cs`
+- `Ros2/pylon_bridge/pylon_bridge/packet_conversion.py`

@@ -1,6 +1,6 @@
 # スタートラッカー
 
-`Kerbal ROS2 Star Tracker`は、宇宙空間で機体の絶対姿勢を測る表面取付パーツです。VAB/SPHのUtilityにあります。金色の筐体、黒い中空遮光筒、奥にある青いレンズ、4点取付フランジを持つ専用モデルです。外形は22 × 19 × 29.3 cm、質量8 kgです。
+`PyLoN Star Tracker`は、宇宙空間で機体の絶対姿勢を測る表面取付パーツです。VAB/SPHのUtilityにあります。金色の筐体、黒い中空遮光筒、奥にある青いレンズ、4点取付フランジを持つ専用モデルです。外形は22 × 19 × 29.3 cm、質量8 kgです。
 
 ## 取り付けと起動
 
@@ -12,7 +12,7 @@
 
 ```bash
 source ~/ros2_ws/install/setup.bash
-ros2 run ksp_lidar_bridge udp_bridge
+ros2 run pylon_bridge udp_bridge
 # 別ターミナルで、実際のIDへ置き換える
 ros2 topic echo /ksp_vessel/star_tracker/star_tracker_example/state
 ros2 topic echo /ksp_vessel/star_tracker/star_tracker_example/attitude
@@ -22,7 +22,7 @@ ros2 topic echo /ksp_vessel/star_tracker/star_tracker_example/attitude
 
 | Topic | 型 | 配信条件 |
 |---|---|---|
-| `/ksp_vessel/star_tracker/<id>/state` | `ksp_ros2_interfaces/msg/StarTrackerState` | 正常・測定不能とも既定5 Hz。姿勢、valid、理由、共分散、機体・センサーIDを同時配信 |
+| `/ksp_vessel/star_tracker/<id>/state` | `pylon_interfaces/msg/StarTrackerState` | 正常・測定不能とも既定5 Hz。姿勢、valid、理由、共分散、機体・センサーIDを同時配信 |
 | `/ksp_vessel/star_tracker/<id>/attitude` | `geometry_msgs/msg/QuaternionStamped` | `valid=true`の測定だけ |
 
 両方Reliable / Volatile / depth 10です。`--topic-prefix`に追従し、`--disable-ground-truth`でも利用できます。推定器は`state`を購読し、`valid`とtimestampを確認してください。`attitude`単独には無効通知が含まれません。
@@ -80,4 +80,4 @@ ros2 topic echo /ksp_vessel/star_tracker/star_tracker_example/attitude
 | `acquisitionSeconds` | 2 | 連続clearを要求するシミュレーション秒数 |
 | `noiseArcsec` | 20 | 各軸の姿勢誤差標準偏差 |
 | `electricChargePerSecond` | 0.05 | 消費EC/s |
-| `udpHost` / `udpPort` | `127.0.0.1` / `49010` | 既存bridgeへの送信先 |
+| `PYLON_TRANSPORT.stateHost` / `PYLON_TRANSPORT.statePort` | `127.0.0.1` / `49010` | 既存bridgeへの送信先 |

@@ -28,7 +28,7 @@ bridgeがURDF固定jointを`/tf_static`へpublishし、CoM変化があるroot ed
 
 ## 更新と期限切れ
 
-- Flight共通の`KerbalRosVesselModelManager`がactive vesselモデルを送信します。LiDAR非搭載の機体にも対応し、送信担当は常に一つです。
+- Flight共通の`PyLoNVesselModelManager`がactive vesselモデルを送信します。LiDAR非搭載の機体にも対応し、送信担当は常に一つです。
 - 毎回の更新で全パーツの現在の形状と相対姿勢を取得します。構成変更だけでなく、展開・可動・サイズ変更もURDFとTFへ反映します（連続アニメーションではなく更新間隔ごとのスナップショットです）。
 - 既定の再送間隔は2秒です。
 - 受信モデルの有効期限は`max(3秒, refresh間隔 × 3)`です。既定では6秒です。
@@ -39,7 +39,7 @@ bridgeがURDF固定jointを`/tf_static`へpublishし、CoM変化があるroot ed
 
 ## センサーframeとの接続
 
-受信センサーパケットの`partFlightId`がURDFのpart mappingに存在すると、bridgeは対応linkの子へセンサーposeを`/tf_static`で配信します。LiDAR / Image / CameraInfoの`frame_id`は`ros2_ksp_<sensor_id>_<kind>_frame`形式の安定した子frameに一致します。
+受信センサーパケットの`partFlightId`がURDFのpart mappingに存在すると、bridgeは対応linkの子へセンサーposeを`/tf_static`で配信します。LiDAR / Image / CameraInfoの`frame_id`は`pylon_<sensor_id>_<kind>_frame`形式の安定した子frameに一致します。
 
 モデルがない、期限切れ、またはpart mappingにない間も同じsensor frame名を使いますが、機体TFへは接続されません。`VesselLifecycle.model_ready`で区別できます。
 
@@ -61,25 +61,10 @@ bridgeがURDF固定jointを`/tf_static`へpublishし、CoM変化があるroot ed
 
 ## 実装確認先
 
-- `Source/KerbalLiDAR/Api/Ksp/KerbalRosVesselModelManager.Geometry.cs`
-- `Ros2/ksp_lidar_bridge/ksp_lidar_bridge/vessel_model.py`
-- `Ros2/ksp_lidar_bridge/ksp_lidar_bridge/udp_bridge.py`
+- `Source/PyLoN/Api/Ksp/PyLoNVesselModelManager.Geometry.cs`
+- `Ros2/pylon_bridge/pylon_bridge/vessel_model.py`
+- `Ros2/pylon_bridge/pylon_bridge/udp_bridge.py`
 
 ## 共通モデル設定
 
-`KERBAL_ROS2_MODEL` ConfigNodeで設定します。設定ノードがない場合は従来の送信担当に相当する最初の有効なLiDAR設定を使用し、LiDARがない場合はloopback:49010へ2秒間隔で送信します。全機体で無効化する場合は共通設定の`enabled = false`を指定します。
-
-```text
-KERBAL_ROS2_MODEL
-{
-    enabled = true
-    udpHost = 127.0.0.1
-    udpPort = 49010
-    refreshSeconds = 2
-    chunkBytes = 12000
-    maxChunks = 256
-    allowRemoteUrdf = false
-}
-```
-
-共通設定ノードが存在する場合は共通設定を優先し、未指定フィールドには上記の既定値を使用します。機体を切り替えるかFlightを開始すると設定を読み直します。従来のLiDAR個別設定は互換用で、LiDARからのモデル二重送信は行いません。
+`GameData/PyLoN/Config/Runtime.cfg`の`PYLON_MODEL`で送信を設定し、通信先は`PYLON_TRANSPORT`で共通管理します。LiDARパーツの有無や設定に依存しません。[設定一覧](../reference/part-config.md)を参照してください。機体切替またはFlight開始時にモデル設定を読み直します。

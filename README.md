@@ -1,4 +1,4 @@
-# Kerbal LiDAR / ROS2 Robotics
+# PyLoN
 
 Kerbal Space Program 1.x向けのセンサー・ロボティクスmodです。2D/3D LiDARとRGBカメラに加え、ROS2から操作できる回転サーボとリニアモーターを追加します。KSPとROS2の間はUDP JSONで中継します。
 
@@ -7,11 +7,12 @@ Kerbal Space Program 1.x向けのセンサー・ロボティクスmodです。2D
 起動手順、全Topic、パーツごとの入出力、設定値はVitePressドキュメントにまとめています。
 
 ```bash
+cd docs
 pnpm install
 pnpm run docs:dev
 ```
 
-静的ビルドは`pnpm run docs:build`です。ドキュメント本体は`docs/`にあります。
+静的ビルドは`pnpm run docs:build`です。ドキュメント本体とビルド・公開設定は`docs/`にあります。
 
 kRPCは使用しません。KSPプラグインがセンサー取得と機体制御を行い、ROS2 bridgeと直接UDP通信するため、`GameData/kRPC`やkRPCクライアントライブラリは不要です。
 
@@ -22,18 +23,18 @@ kRPCは使用しません。KSPプラグインがセンサー取得と機体制�
 - 表面取付のRGBカメラパーツ（`sensor_msgs/Image` + `CameraInfo`）
 - [スタートラッカー](docs/parts/star-tracker.md)：専用3Dモデル、慣性姿勢・共分散・測定不能理由Topic
 - 標準ドッキングポートの状態・切離しTopicと選択式RGBポートカメラ
-- `part.cfg`からレーザー本数、FOV、最大距離、スキャン周波数、UDP送信先を変更
+- `part.cfg`からレーザー本数、FOV、最大距離、スキャン周波数を変更。UDP送信先は共通のRuntime.cfgで設定
 - レイキャスト結果をUDP JSONで外部へ送信
 - 別ROS2パッケージでUDP JSONを標準ROS2 Topicへ中継
 - Flight中の操作機体を、資産を含まないランタイム用プロキシURDFとしてROS2へ中継
 - 自船コライダーを無視する設定
 - Clamp-O-Tron Jr.と同じ0.625 m径の両面スタック式回転サーボ
 - 両端にパーツを取り付けられる、ストローク1.6 mのリニアモーター
-- ROS2 `trajectory_msgs/msg/JointTrajectory`による位置・速度・effort上限制御
+- ROS2 `pylon_interfaces/msg/MotorCommand`によるlease付き位置・速度・effort制御
 - ROS2 `sensor_msgs/msg/JointState`による位置・速度・トルク/推力フィードバック
 - `diagnostic_msgs/msg/DiagnosticArray`による電源状態・推定電流フィードバック
 - KSP標準エンジンとRCSをROS2から列挙し、モジュールごとに起動・停止・個別推力制御
-- ROS2 `Float64`によるメインスロットルと`Twist`によるRCS 6軸制御
+- 型付きEngineCommand・RcsCommandとBodyWrenchCommandによる推進制御
 - 実`vessel_id`へ結び付くpriority付き制御lease、SAS排他、emergency stop
 - 各RCSノズルの位置・方向に基づくWrench配分と実現量feedback
 - 共通の`ControlSetpoint`→安全な6DoF機体制御package
@@ -48,20 +49,22 @@ KSP本体のManaged DLLを参照してビルドします。KSPのインストー
 .\build.ps1 -KspDir "C:\SteamLibrary\steamapps\common\Kerbal Space Program"
 ```
 
-ビルドに成功するとDLLが`GameData/KerbalLiDAR/Plugins/KerbalLiDAR.dll`へ出力されます。
+ビルドに成功するとDLLが`GameData/PyLoN/Plugins/PyLoN.dll`へ出力されます。
 
 ## インストール
 
-`GameData/KerbalLiDAR`フォルダをKSPの`GameData`へコピーします。
+`GameData/PyLoN`フォルダをKSPの`GameData`へコピーします。
 
 ## 設定
 
 レーザー本数などは各パーツのCFGで変更します。
 
-- `GameData/KerbalLiDAR/Parts/Lidar2D/part.cfg`
-- `GameData/KerbalLiDAR/Parts/Lidar3D/part.cfg`
+- `GameData/PyLoN/Parts/Lidar2D/part.cfg`
+- `GameData/PyLoN/Parts/Lidar3D/part.cfg`
 
-主な設定値:
+通信先とモデル設定は`GameData/PyLoN/Config/Runtime.cfg`で共通管理します。
+
+主なセンサー設定値:
 
 - `horizontalLaserCount`: 水平方向のレーザー数
 - `verticalLaserCount`: 垂直方向のレーザー数。2Dでは`1`
@@ -75,17 +78,10 @@ KSP本体のManaged DLLを参照してビルドします。KSPのインストー
 - `nearRangeMeters`: 近距離プロファイルの最大距離（10〜30 m、160 rays/sr）
 - `mediumRangeMeters`: 中距離プロファイルの最大距離（50〜150 m、320 rays/sr）
 - `longRangeMeters`: 長距離プロファイルの最大距離（150〜250 m、1024 rays/sr）
-- `udpHost`: UDP送信先
-- `udpPort`: UDP送信先ポート
-- `activeVesselUrdfEnabled`: Flight中の操作機体プロキシURDFを送信
-- `activeVesselUrdfRefreshSeconds`: URDFを再送・更新する間隔。既定値は2秒
-- `activeVesselUrdfChunkBytes`: gzip圧縮後の1チャンクの最大バイト数
-- `maxActiveVesselUrdfChunks`: 1モデルに許可する最大チャンク数
-- `allowRemoteUrdf`: loopback以外へのURDF送信を明示的に許可。既定値は`false`
 - `ignoreOwnVessel`: 自船コライダーを無視
 - `forwardAxis` / `upAxis`: レイを飛ばすパーツローカル軸
 - `align3DToAttachNormal`: 3D LiDARの半球中心を取付面の外向き法線へ自動的に合わせる。既定値は`true`
-- `rayOriginLocalPosition`: レイ原点のパーツローカル座標。標準パーツではOBJの前面に設定
+- `rayOriginLocalPosition`: レイ原点のパーツローカル座標。標準パーツではネイティブモデルの前面に設定
 - `originOffsetMeters`: `rayOriginLocalPosition`からスキャン前方へ追加する距離
 - `includeHitPoints`: ヒット座標もJSONに含める
 - `includeDirections`: レイ方向もJSONに含める
@@ -104,7 +100,7 @@ VAB/SPHまたはFlightでLiDARパーツを右クリックし、Part Action Windo
 
 VAB/SPHでLiDARまたはRGBカメラを右クリックし、`Edit ROS2 Sensor ID`を押すとIDを編集できます。入力値はROS2名として使える英数字とアンダースコアへ正規化され、同じ機体内に同名がある場合は`_2`、`_3`のような接尾辞が自動で付きます。新規パーツには`lidar_<8桁UID>`または`camera_<8桁UID>`が設定されます。
 
-IDはcraftファイルへ保存され、センサーTopicの名前空間になります。以前のcraftに保存された`partName`/`lidarName`は初回ロード時に移行されます。タイヤ、エンジン、RCS、ROSモーターには編集可能なIDを追加せず、KSPの`persistentId`からTopic名を自動生成します。
+IDはcraftファイルへ保存され、センサーTopicの名前空間になります。以前のcraftはロード前に[移行ツール](Migration/README.md)で変換してください。タイヤ、エンジン、RCS、ROSモーターには編集可能なIDを追加せず、KSPの`persistentId`からTopic名を自動生成します。
 
 ## 飛行中のROS2パーツID表示
 
@@ -114,26 +110,26 @@ Flight画面の標準ツールバーにある`ID`ボタンへマウスを重ね�
 
 ## ROS2
 
-対応環境はROS2 Jazzy（Ubuntu 24.04、Python 3.12）です。KSP側からROS2プロセスは起動しません。別プロセスとして`Ros2/ksp_lidar_bridge`パッケージを起動し、KSPから飛んでくるUDP JSONをLiDAR名ごとのTopicへ変換します。
+対応環境はROS2 Jazzy（Ubuntu 24.04、Python 3.12）です。KSP側からROS2プロセスは起動しません。別プロセスとして`Ros2/pylon_bridge`パッケージを起動し、KSPから飛んでくるUDP JSONをLiDAR名ごとのTopicへ変換します。
 
 ```bash
 mkdir -p ~/ros2_ws/src
-cp -r Ros2/ksp_lidar_bridge ~/ros2_ws/src/
-cp -r Ros2/ksp_ros2_interfaces ~/ros2_ws/src/
-cp -r Ros2/ksp_vehicle_control ~/ros2_ws/src/
+cp -r Ros2/pylon_bridge ~/ros2_ws/src/
+cp -r Ros2/pylon_interfaces ~/ros2_ws/src/
+cp -r Ros2/pylon_vehicle_control ~/ros2_ws/src/
 cd ~/ros2_ws
 source /opt/ros/jazzy/setup.bash
 rosdep install --from-paths src --ignore-src --rosdistro jazzy -y
-colcon build --packages-up-to ksp_lidar_bridge ksp_vehicle_control
+colcon build --packages-up-to pylon_bridge pylon_vehicle_control
 source install/setup.bash
-ros2 run ksp_lidar_bridge udp_bridge --host 127.0.0.1 --port 49010
+ros2 run pylon_bridge udp_bridge --host 127.0.0.1 --port 49010
 ```
 
 Humbleから同じworkspaceを移行する場合は、Pythonバージョンと生成済みinterfaceが異なるため、`build`、`install`、`log`を削除してからJazzy環境で再ビルドしてください。
 
 Topicはパーツごとに作られます。2D LiDARは`sensor_msgs/msg/LaserScan`、3D LiDARは`sensor_msgs/msg/PointCloud2`、RGBカメラは`sensor_msgs/msg/Image`と`sensor_msgs/msg/CameraInfo`としてpublishします。
 
-- Bridge状態: `/ros2_ksp/status` (`std_msgs/msg/String`、起動直後から常設)
+- Bridge状態: `/pylon/status` (`std_msgs/msg/String`、起動直後から常設)
 - 2D LiDAR: `/ksp_vessel/lidar_2d/<sensor_id>/scan`
 - 3D LiDAR: `/ksp_vessel/lidar_3d/<sensor_id>/points`
 - RGB画像: `/ksp_vessel/camera/<sensor_id>/image_raw` (`rgb8`)
@@ -147,13 +143,13 @@ TopicはFlight中にスキャンを受信したときだけ作成されます。
 
 ```bash
 ros2 topic list
-ros2 topic echo --once /ros2_ksp/status
+ros2 topic echo --once /pylon/status
 ros2 topic echo /ksp_vessel/lidar_2d/front_lidar/scan
 ```
 
 ## RGBカメラ
 
-`Kerbal ROS2 RGB Camera`を機体表面へ取り付けると、Flight中の3D描画（銀河背景、Scaled Space、近距離／遠距離シーン。画面UIを除く）をセンサー視点で合成し、ROS2の標準カメラメッセージとして配信します。初期設定は320 x 240、5 Hz、垂直FOV 60度です。Part Action Windowから160 x 120、320 x 240、640 x 480を選択でき、フレームレートとFOVも変更できます。
+`PyLoN RGB Camera`を機体表面へ取り付けると、Flight中の3D描画（銀河背景、Scaled Space、近距離／遠距離シーン。画面UIを除く）をセンサー視点で合成し、ROS2の標準カメラメッセージとして配信します。初期設定は320 x 240、5 Hz、垂直FOV 60度です。Part Action Windowから160 x 120、320 x 240、640 x 480を選択でき、フレームレートとFOVも変更できます。
 
 UDPでは1フレームをチェックサム付きの複数チャンクへ分割し、bridgeは全チャンクが揃ったフレームだけをpublishします。ROS2側の画像は上端始まりの`rgb8`で、`Image`と`CameraInfo`のtimestampおよび`frame_id`は一致します。カメラframeはREP-103のoptical規約（+X右、+Y下、+Z前方）です。
 
@@ -163,7 +159,7 @@ ros2 topic echo --once /ksp_vessel/camera/rgb_camera/camera_info
 ros2 run rqt_image_view rqt_image_view /ksp_vessel/camera/rgb_camera/image_raw
 ```
 
-通常は`ROS_LOCALHOST_ONLY`やROS2 daemonの操作は不要です。bridgeの起動中は、KSPが未起動でも`/ros2_ksp/status`、アクチュエータ指令、モデル関連のTopicが`ros2 topic list`へ表示されます。LiDAR固有TopicだけはセンサーIDと2D/3D種別を最初のUDPスキャンから決定するため、LiDARを搭載した機体でFlightへ入った後に表示されます。
+通常は`ROS_LOCALHOST_ONLY`やROS2 daemonの操作は不要です。bridgeの起動中は、KSPが未起動でも`/pylon/status`、アクチュエータ指令、モデル関連のTopicが`ros2 topic list`へ表示されます。LiDAR固有TopicだけはセンサーIDと2D/3D種別を最初のUDPスキャンから決定するため、LiDARを搭載した機体でFlightへ入った後に表示されます。
 
 ### Active vesselのランタイムURDF
 
@@ -216,115 +212,32 @@ ros2 topic echo /ksp_vessel/control/authority/state
 ros2 topic echo /ksp_vessel/control/wrench_feedback
 ```
 
-Ground Truthは操作機体を選択した地点を原点とする東・北・上の`ground_truth_enu`です。world/body両方のTwistを公開し、センサーと同じKSP universal timeへpose TFを整合させます。固定proxy jointとsensor mountは`/tf_static`です。
+Ground Truthは操作機体を選択した地点を原点とする東・北・上の`pylon_ground_truth_enu`です。world/body両方のTwistを公開し、センサーと同じKSP universal timeへpose TFを整合させます。固定proxy jointとsensor mountは`/tf_static`です。
 
 ホイール、Engine、RCS、ROSモーター、デカプラー、手動展開式フェアリングの正式commandにも同じlease identityとsequenceが必要です。分離機構はownerだけが作動できます。詳細は[機体制御API](docs/api/vehicle-control.md)を参照してください。
 
-## 2D LiDAR Mapping・Nav2
+## デモ
 
-`Ros2/ksp_nav2_bringup`はbridgeと分離したROS2 integration packageです。2D `LaserScan`だけからscan-to-scan ICP odometryを作り、SLAM Toolbox / AMCL / Nav2へ接続します。planar controllerは`cmd_vel`が有効な間だけauthority leaseを取得し、停止後に解放します。起動方法と制約は[2D LiDAR MappingとNav2](docs/guide/nav2.md)を参照してください。
+通常の`./sync.sh`は本体3パッケージだけを同期します。デモは明示指定します。
 
-実機体を使って上から実行できる手順は、[`test A`デブリ周回](Demo/debris_orbit/README.md#実機の準備と起動)と[`rober A` SLAM + Nav2](Ros2/ksp_nav2_bringup/README.md#rober-aで上から順に実行する手順)に分けています。デブリ周回は位置推定とRCS制御を分離し、3D LiDAR＋IMUで真値を使わずに周回し、36度ごとに機体カメラで撮影します。RVizで対象点群・視線・相対軌跡を表示します。KSPの通常の操作で機体を準備して実行します。
+```bash
+./sync.sh --demo mun_rover
+./sync.sh --demo debris_orbit --demo position_estimator
+./sync.sh --all-demos
+```
+
+`Demo/`には`pylon_demo_debris_orbit`、`pylon_demo_position_estimator`、`pylon_demo_mun_rover`を維持しています。Nav2・RViz・SciPyは使用するデモの依存で、本体には不要です。
 
 ## ROS2モーター
 
-追加パーツ:
-
-- `ROS2 Size-0 Axial Servo`: 回転軸。可動範囲は-180〜180度、既定速度は45度/s、定格トルクは250 N·m
-- `ROS2 Slim Telescoping Actuator`: 直径0.3125 mの取付円盤と2段ロッドを持つ直動軸。可動範囲は0〜1.6 mで、縮長約1.6 mから全長約3.2 mまで伸びる。既定速度は0.5 m/s（飛行中に調整可能）、定格推力は4000 N
-
-どちらも`bottom`側を親パーツへ、動かしたい構造物を`top`側へ取り付けます。どちらも専用のネイティブモデルを同梱しています。サーボは2円盤の相対回転、リニアアクチュエーターは固定筒・中間筒・先端ロッドの伸縮で動作を表示します。
-
-ROS2ブリッジを起動すると、KSPは状態をUDP 49010へ送り、ブリッジは指令をUDP 49011へ返します。モーター名を未設定にした場合は、KSPの`partFlightId`を使って`servo_<id>`または`linear_<id>`になります。
-
-主なTopic:
-
-- legacy subscribe（既定無効） `/ksp_vessel/actuators/servo/trajectory`: `trajectory_msgs/msg/JointTrajectory`
-- publish `/ksp_vessel/joint_states`: `sensor_msgs/msg/JointState`
-- publish `/ros2_ksp/diagnostics`: `diagnostic_msgs/msg/DiagnosticArray`
-
-回転軸のposition/velocityはrad・rad/s、直動軸はm・m/sです。effortは回転軸がN·m、直動軸がNです。以下は`--enable-legacy-control`を付けた移行用の例です。新規コードではauthority付き`MotorCommand`を使います。
-
-```bash
-ros2 topic pub --once /ksp_vessel/actuators/servo/trajectory trajectory_msgs/msg/JointTrajectory \
-  "{joint_names: [servo_12345], points: [{positions: [1.5708], velocities: [0.5], effort: [100.0]}]}"
-```
-
-`JointTrajectory`に複数pointを指定した場合、`time_from_start`の時刻に順番にKSPへ送ります。新しいtrajectoryを受信すると、未送信の古いtrajectoryは置き換えます。positionを省略してvelocityだけを送ると速度モードになり、通信断時は0.5秒でその場停止します。
-
-`/ksp_vessel/joint_states.effort`はKSPロボティクスジョイントのモーター出力から換算した推定トルク/推力です。`/ros2_ksp/diagnostics`の`estimated_current_a`は、パーツ設定の`torquePerAmpNm`または`forcePerAmpN`を使った推定値で、実測電流ではありません。
+`/ksp_vessel/actuators/servo/command`へ`pylon_interfaces/msg/MotorCommand`を送ります。位置・速度・effortの各modeに対応し、`vessel_id`、`controller_id`、`lease_id`、増加する`sequence`を必須とします。状態はMotorStateとJointStateへ配信します。[詳細](docs/parts/motors.md)。
 
 ## ROS2推進系
 
-Flight中のactive vesselにあるすべての`ModuleEngines` / `ModuleEnginesFX`と`ModuleRCS` / `ModuleRCSFX`を自動検出します。専用パーツへの差し替えは不要です。
+エンジンはEngineCommand、RCSはRcsCommand、機体全体の力・トルクはBodyWrenchCommandで操作します。すべてlease付きです。[詳細](docs/parts/propulsion.md)。
 
-主なTopic:
+## UDP契約と移行
 
-- publish `/ksp_vessel/actuators/propulsion/state`: `ksp_ros2_interfaces/msg/EngineState`
-- subscribe `/ksp_vessel/actuators/propulsion/command`: `ksp_ros2_interfaces/msg/EngineCommand`
-- legacy subscribe（既定無効） `/ksp_vessel/actuators/propulsion/main_throttle`: `std_msgs/msg/Float64`
-- legacy subscribe（既定無効） `/ksp_vessel/actuators/rcs/twist_command`: `geometry_msgs/msg/Twist`
+PyLoN UDP v1は`pylon_*`種別と`version: 1`を使用します。セッションheartbeatに続いて、各パケットにプロセスID・世代・epoch・機体IDを含めます。旧プロトコルは受信しません。
 
-`state`には1モジュール1メッセージのJSONが10 Hzで流れます。`name`は`engine_<partFlightId>_<moduleIndex>`または`rcs_<partFlightId>_<moduleIndex>`です。ほかに`enabled`、`throttleLimit`、現在推力`thrust`、定格推力`maxThrust`、`flameout`、ROS制御中かを示す`commandActive`などが含まれます。
-
-```bash
-ros2 topic echo /ksp_vessel/actuators/propulsion/state
-```
-
-以下はbridgeへ`--enable-legacy-control`を付けた移行用APIの例です。所有権を調停できないため、新規コードではauthority付き`EngineCommand` / `RcsCommand`またはBody Wrenchを使ってください。legacy推力指令には通信断フェイルセーフがあるため、噴射中は`-r 5`などで0.5秒より短い間隔で継続送信します。
-
-```bash
-ros2 topic pub -r 5 /ksp_vessel/actuators/propulsion/json_command std_msgs/msg/String \
-  '{data: "{\"commands\":[{\"name\":\"engine_12345_0\",\"kind\":\"engine\",\"enabled\":true,\"throttle\":0.65}],\"timeout\":0.5}"}'
-```
-
-複数のエンジンやRCSブロックは`commands`配列にまとめて指定できます。`enabled`は起動・停止、`throttle`は0.0〜1.0のモジュール固有推力です。エンジンではKSPのindependent throttle、RCSではthrust limiterを使います。固体燃料エンジンなど絞れないものは状態の`throttleable`が`false`で、KSP側の物理制約が優先されます。
-
-すべてのROS推力オーバーライドを解除し、元のKSP設定へ戻す例:
-
-```bash
-ros2 topic pub --once /ksp_vessel/actuators/propulsion/json_command std_msgs/msg/String \
-  '{data: "{\"commands\":[{\"name\":\"*\",\"release\":true}]}"}'
-```
-
-メインスロットルは0.0〜1.0です。
-
-```bash
-ros2 topic pub -r 5 /ksp_vessel/actuators/propulsion/main_throttle std_msgs/msg/Float64 '{data: 0.8}'
-```
-
-RCSは`Twist.linear.{x,y,z}`をKSPのX/Y/Z並進入力へ、`Twist.angular.{x,y,z}`をpitch/yaw/rollへ対応させます。各値は-1.0〜1.0です。受信中だけRCSアクショングループも自動で有効になります。個々のノズルはKSPが機体姿勢と噴射方向から選択し、各RCSモジュールの最大推力は上記`propulsion/command`で個別設定できます。pitch/yaw/rollはKSP共通の操舵軸なので、同じ軸を使うリアクションホイールや舵面も反応します。
-
-```bash
-ros2 topic pub -r 5 /ksp_vessel/actuators/rcs/twist_command geometry_msgs/msg/Twist \
-  '{linear: {x: 0.0, y: 0.0, z: 1.0}, angular: {x: 0.0, y: 0.2, z: 0.0}}'
-```
-
-メインスロットル、RCS 6軸入力、個別推力指令は既定0.5秒でタイムアウトし、推力または入力を0へ落とします。明示的な`release`時と操作機体の切替時には、ROS制御前のindependent throttle / RCS limiter設定を復元します。エンジンの再点火可否、停止可否、燃料切れ、ステージ条件はKSP標準の制約に従います。
-
-## UDP JSON
-
-送信されるJSONは1スキャン1パケットです。距離配列は垂直方向を外側、水平方向を内側にしたフラット配列です。未ヒットはデフォルトで`-1`です。
-
-```json
-{
-  "type": "ksp_lidar_scan",
-  "version": 1,
-  "mode": "3D",
-  "name": "front_lidar",
-  "partName": "front_lidar",
-  "lidarName": "front_lidar",
-  "vessel": "Rover",
-  "partFlightId": 12345,
-  "universalTime": 42.0,
-  "horizontalCount": 64,
-  "verticalCount": 16,
-  "horizontalFovDeg": 360.0,
-  "verticalFovDeg": 30.0,
-  "maxDistance": 2000.0,
-  "layout": "vertical-major",
-  "hitCount": 512,
-  "ranges": [1.23, 1.25, -1.0],
-  "hitMask": [1, 1, 0]
-}
-```
+既存セーブ・機体の変換は[移行ガイド](Migration/README.md)を参照してください。`/ksp_vessel`配下の現行Topicは維持し、ROS2パッケージ・型・ノード・生成フレームはPyLoN名へ更新しました。

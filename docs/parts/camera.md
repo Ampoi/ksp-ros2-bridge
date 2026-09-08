@@ -1,6 +1,6 @@
 # RGBカメラ
 
-`Kerbal ROS2 RGB Camera`はFlight描画をraw RGBフレームとして取得します。KSPからはチェックサム付きUDPチャンクで送り、bridgeは全チャンクが揃ってSHA-256検証に成功したフレームだけをpublishします。
+`PyLoN RGB Camera`はFlight描画をraw RGBフレームとして取得します。KSPからはチェックサム付きUDPチャンクで送り、bridgeは全チャンクが揃ってSHA-256検証に成功したフレームだけをpublishします。
 
 画像はKSPの銀河背景、Scaled Space、Flightの近距離／遠距離カメラをセンサー視点で合成します。画面UIは含みません。描画先はフレームごとにクリアされるため、空や背景が前フレームの透明画素として残ることはありません。
 
@@ -57,7 +57,7 @@ ros2 topic echo --once /ksp_vessel/camera/orbit_camera/camera_info
 
 モデルは専用のオンボードカメラです。取付台と左右の支柱は固定され、カメラ本体とレンズだけが上下に回転します。
 VAB/SPHとFlightの右クリックメニューにある`Camera Tilt`で0〜180°を設定できます。
-角度はcraft／セーブに保存され、`part.cfg`内の`ModuleKerbalRgbCamera`の`cameraTiltDegrees`で新規パーツの初期角度を指定できます。
+角度はcraft／セーブに保存され、`part.cfg`内の`ModulePyLoNRgbCamera`の`cameraTiltDegrees`で新規パーツの初期角度を指定できます。
 
 ```cfg
 cameraTiltDegrees = 90
@@ -117,6 +117,6 @@ active vesselモデルへ接続できる場合は対応linkの子`camera_optical
 
 ## 実装確認先
 
-- `GameData/KerbalLiDAR/Parts/RgbCamera/part.cfg`
-- `Source/KerbalLiDAR/Api/Ksp/ModuleKerbalRgbCamera.cs`
-- `Ros2/ksp_lidar_bridge/ksp_lidar_bridge/camera_packets.py`
+- `GameData/PyLoN/Parts/RgbCamera/part.cfg`
+- `Source/PyLoN/Api/Ksp/ModulePyLoNRgbCamera.cs`
+- `Ros2/pylon_bridge/pylon_bridge/camera_packets.py`

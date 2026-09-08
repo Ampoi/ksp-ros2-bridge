@@ -1,0 +1,76 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ''
+  Global Options:
+    Background Color: 18; 22; 30
+    Fixed Frame: pylon_debris_view_demo_vehicle
+    Frame Rate: 30
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid (metres)
+      Enabled: true
+      Cell Size: 5
+      Plane Cell Count: 20
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Target, chaser, line of sight and desired orbit
+      Enabled: true
+      Topic:
+        Value: /pylon_demo_debris_orbit_view/markers
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        Depth: 5
+    - Class: rviz_default_plugins/PointCloud2
+      Name: LiDAR returns
+      Enabled: true
+      Topic:
+        Value: /pylon_demo_debris_orbit_view/points
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        Depth: 5
+      Size (m): 0.12
+      Style: Spheres
+      Color Transformer: FlatColor
+      Color: 180; 190; 210
+      Position Transformer: XYZ
+      Decay Time: 0.3
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Selected debris cluster
+      Enabled: true
+      Topic:
+        Value: /pylon_demo_debris_orbit_view/target_points
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        Depth: 5
+      Size (m): 0.18
+      Style: Spheres
+      Color Transformer: FlatColor
+      Color: 50; 220; 255
+      Position Transformer: XYZ
+      Decay Time: 0.3
+    - Class: rviz_default_plugins/Path
+      Name: Chaser trajectory relative to debris
+      Enabled: true
+      Topic:
+        Value: /pylon_demo_debris_orbit_view/path
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        Depth: 5
+      Color: 255; 180; 40
+      Line Style: Billboards
+      Line Width: 0.08
+      Buffer Length: 1
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 48
+      Pitch: 0.75
+      Yaw: 0.8
+      Focal Point: {X: 0, Y: 0, Z: 0}
+      Target Frame: <Fixed Frame>
+Window Geometry:
+  Width: 1280
+  Height: 900

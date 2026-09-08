@@ -34,10 +34,10 @@ ros2 topic echo /ksp_vessel/control/authority/state
 ros2 topic echo /ksp_vessel/control/wrench_feedback
 ```
 
-通常の連続制御には、lease更新とsequence採番を行う`ksp_vehicle_control`を使ってください。
+通常の連続制御には、lease更新とsequence採番を行う`pylon_vehicle_control`を使ってください。
 
 ```bash
-ros2 run ksp_vehicle_control setpoint_controller --ros-args \
+ros2 run pylon_vehicle_control setpoint_controller --ros-args \
   -p controller_id:=my_controller \
   -p setpoint_topic:=/my_controller/setpoint
 ```
@@ -75,21 +75,21 @@ RCS配分器は、現在有効な各ノズルについて次をKSPと同じ軸�
 
 `suppress_sas: true`のleaseを取得すると、ownerが存在する期間を通じてKSP側がSASを停止し、解放または期限切れ時に元の状態へ戻します。個々のトルク指令の有無では切り替えません。
 
-`ACTION_EMERGENCY_STOP`は通常のWrenchと個別overrideをゼロ化し、legacy推進指令を停止し、SASも停止したままlatchします。解除できるのはe-stopを発行した同じ`controller_id + lease_id`だけです。e-stopの状態は機体切替では自動解除されません。
+`ACTION_EMERGENCY_STOP`は通常のWrenchと個別overrideをゼロ化し、SASも停止したままlatchします。解除できるのはe-stopを発行した同じ`controller_id + lease_id`だけです。e-stopの状態は機体切替では自動解除されません。
 
 e-stop自体は現在のownerでなくても、activeな`vessel_id`と一意なlease identity、正のsequenceを指定して発行できます。解除は同じidentityでsequenceを増やします。
 
 ```bash
 ros2 topic pub --once /ksp_vessel/control/authority/command \
-  ksp_ros2_interfaces/msg/ControlAuthorityCommand \
+  pylon_interfaces/msg/ControlAuthorityCommand \
   "{action: 4, vessel_id: '<vessel-id>', controller_id: safety_operator, lease_id: '<unique-lease-id>', sequence: 1}"
 
 ros2 topic pub --once /ksp_vessel/control/authority/command \
-  ksp_ros2_interfaces/msg/ControlAuthorityCommand \
+  pylon_interfaces/msg/ControlAuthorityCommand \
   "{action: 5, vessel_id: '<vessel-id>', controller_id: safety_operator, lease_id: '<unique-lease-id>', sequence: 2}"
 ```
 
-KSP側の最終制限は`GameData/KerbalLiDAR/Config/ControlSafety.cfg`で設定します。
+KSP側の最終制限は`GameData/PyLoN/Config/ControlSafety.cfg`で設定します。
 
 | 設定 | 既定値 | 内容 |
 |---|---:|---|
@@ -107,12 +107,12 @@ ROS側の上限よりKSP側を大きく設定し、KSP側は故障時の最終�
 
 | Topic | frame_id | 内容 |
 |---|---|---|
-| `/ksp_vessel/ground_truth/pose` | `ground_truth_enu` | 位置m、姿勢quaternion |
-| `/ksp_vessel/ground_truth/nearby_vessels` | `ground_truth_enu` | 自機と近隣機体の同時刻・同原点の絶対位置・速度。差分から相対状態を算出 |
-| `/ksp_vessel/ground_truth/twist` | `ground_truth_enu` | world-frame速度m/s、角速度rad/s |
+| `/ksp_vessel/ground_truth/pose` | `pylon_ground_truth_enu` | 位置m、姿勢quaternion |
+| `/ksp_vessel/ground_truth/nearby_vessels` | `pylon_ground_truth_enu` | 自機と近隣機体の同時刻・同原点の絶対位置・速度。差分から相対状態を算出 |
+| `/ksp_vessel/ground_truth/twist` | `pylon_ground_truth_enu` | world-frame速度m/s、角速度rad/s |
 | `/ksp_vessel/ground_truth/twist_body` | `base_link` | body-frame速度m/s、角速度rad/s |
-| `/ksp_vessel/ground_truth/acceleration` | `ground_truth_enu` | world-frame運動学的加速度 |
-| `/tf` | `ground_truth_enu -> base_link` | KSP universal time基準のdynamic TF |
+| `/ksp_vessel/ground_truth/acceleration` | `pylon_ground_truth_enu` | world-frame運動学的加速度 |
+| `/tf` | `pylon_ground_truth_enu -> base_link` | KSP universal time基準のdynamic TF |
 | `/tf_static` | proxy fixed joint / sensor mount | 取付姿勢 |
 
 センサーデータのtimestampはKSP universal timeからROS clockへ対応付けます。Ground Truthの最新poseを同じセンサー時刻へ最大0.1秒外挿してTFを補うため、点群より遅い姿勢周期によるfuture extrapolationを避けます。
@@ -123,7 +123,6 @@ ROS側の上限よりKSP側を大きく設定し、KSP側は故障時の最終�
 
 `EngineCommand`、`RcsCommand`、`WheelCommand`、`MotorCommand`、`SeparationCommand`も同じ`vessel_id`、`controller_id`、`lease_id`、`sequence`を必須とします。ownerでない指令はKSPが拒否します。不可逆な分離操作もlease外では実行されません。
 
-旧`WrenchStamped` APIは既定で無効です。移行確認に限りbridgeへ`--body-wrench-topic /ksp_vessel/body_wrench`を与えると、最低priorityの互換leaseで有効化できます。メインスロットル、Twist RCS、JointTrajectory、JSON推進APIもlegacy互換経路で、既定では購読しません。必要な場合だけbridgeへ`--enable-legacy-control`を付けてください。正式leaseが存在する間はKSP側でもlegacy指令を停止します。
 
 ## Bridge起動引数
 
@@ -134,8 +133,8 @@ ROS側の上限よりKSP側を大きく設定し、KSP側は故障時の最終�
 | `--control-authority-state-topic` | `/ksp_vessel/control/authority/state` |
 | `--wrench-feedback-topic` | `/ksp_vessel/control/wrench_feedback` |
 | `--vessel-lifecycle-topic` | `/ksp_vessel/lifecycle` |
-| `--body-wrench-topic` | 空。旧API無効 |
-| `--enable-legacy-control` | false。所有権なしの旧集約入力を明示的に有効化 |
 | `--ground-truth-prefix` | `/ksp_vessel/ground_truth` |
 | `--actuators-prefix` | `/ksp_vessel/actuators` |
 | `--vehicle-command-timeout-sec` | `0.5` |
+
+共通setpoint controllerは制御権喪失・入力欠測・実行中の世代変更で目標を破棄します。復旧時は新たな`MODE_IDLE`を受けてから、後続の新しいsetpointを受理します。

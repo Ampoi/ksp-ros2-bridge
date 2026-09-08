@@ -1,6 +1,6 @@
 # サーボ / リニアモーター
 
-回転サーボとリニアモーターは共通のROS2 Topicを使います。`JointTrajectory.joint_names`に対象joint名を指定し、状態は全モーターをまとめた`JointState`で受け取ります。
+回転サーボとリニアモーターは共通のROS2 Topicを使います。`MotorCommand.id`に対象joint名を指定し、状態は全モーターをまとめた`JointState`で受け取ります。
 
 ## パーツ
 
@@ -21,11 +21,10 @@
 
 | 方向 | Topic | 型 | 内容 |
 |---|---|---|---|
-| 入力 | `/ksp_vessel/actuators/servo/trajectory` | `trajectory_msgs/msg/JointTrajectory` | legacy互換の複数サーボ指令（既定無効） |
 | 出力 | `/ksp_vessel/joint_states` | `sensor_msgs/msg/JointState` | position、velocity、effort |
-| 出力 | `/ros2_ksp/diagnostics` | `diagnostic_msgs/msg/DiagnosticArray` | 電源・engage・lock・推定電流 |
-| 入力 | `/ksp_vessel/actuators/servo/command` | `ksp_ros2_interfaces/msg/MotorCommand` | `id`で指定する型付き指令 |
-| 出力 | `/ksp_vessel/actuators/servo/state` | `ksp_ros2_interfaces/msg/MotorState` | `id`付きの型付き状態 |
+| 出力 | `/pylon/diagnostics` | `diagnostic_msgs/msg/DiagnosticArray` | 電源・engage・lock・推定電流 |
+| 入力 | `/ksp_vessel/actuators/servo/command` | `pylon_interfaces/msg/MotorCommand` | `id`で指定する型付き指令 |
+| 出力 | `/ksp_vessel/actuators/servo/state` | `pylon_interfaces/msg/MotorState` | `id`付きの型付き状態 |
 
 既定ではKSPが状態を20 HzでUDP 49010へ送り、bridgeは受信するたびにROS2へpublishします。ROS2指令はbridgeからUDP 49011へ送られます。
 
@@ -42,42 +41,6 @@ linear_<partFlightId>
 
 型付きcommand TopicはReliable、state TopicはBest Effortで、どちらもdepth 10です。Topicは常設され、複数モーターのメッセージが同じTopicを流れます。
 
-## JointTrajectory互換入力
-
-`JointTrajectory`は所有権fieldを持てないためlegacy互換扱いで、既定ではbridgeが購読しません。移行時だけbridgeへ`--enable-legacy-control`を付けてください。新規コードでは後述のlease付き`MotorCommand`を使用します。
-
-### 位置指令
-
-サーボを90度へ、速度上限0.5 rad/s、effort上限100 N·mで動かします。
-
-```bash
-ros2 topic pub --once /ksp_vessel/actuators/servo/trajectory \
-  trajectory_msgs/msg/JointTrajectory \
-  "{joint_names: [servo_12345], points: [{positions: [1.5708], velocities: [0.5], effort: [100.0]}]}"
-```
-
-`positions`があるpointはposition modeです。`velocities`も指定した場合、サーボでは移動速度上限、リニアモーターでは`traverseVelocity`として使われます。`effort`は絶対値を上限として扱います。
-
-### 速度指令とフェイルセーフ
-
-`positions`を省略し、`velocities`を指定するとvelocity modeになります。
-
-```bash
-ros2 topic pub -r 10 /ksp_vessel/actuators/servo/trajectory \
-  trajectory_msgs/msg/JointTrajectory \
-  "{joint_names: [linear_12345], points: [{velocities: [0.1]}]}"
-```
-
-velocity modeはKSP側で既定0.5秒の通信タイムアウトを持ちます。継続運転中はタイムアウトより短い周期で再送してください。0速度を受信した場合は現在位置をholdします。position modeは通信断で目標値を破棄しません。
-
-### 複数jointと複数point
-
-- `joint_names`は空にできません。
-- `positions`、`velocities`、`effort`は空配列、または`joint_names`と同じ要素数が必要です。
-- `time_from_start`付きの複数pointはbridgeのROSクロックを基準に順番にUDP送信します。
-- 新しい`JointTrajectory`を受けると、まだ送っていない以前のtrajectory pointをすべて置き換えます。
-- pointにpositionがあればposition、なければvelocity、effortだけならeffort modeとしてencodeします。
-
 ## 単位
 
 | joint | position | velocity | effort |
@@ -85,11 +48,11 @@ velocity modeはKSP側で既定0.5秒の通信タイムアウトを持ちます�
 | revolute | rad | rad/s | N·m |
 | prismatic | m | m/s | N |
 
-`/ros2_ksp/diagnostics`の`estimated_current_a`は、推定effortを`torquePerAmpNm`または`forcePerAmpN`で割った値です。実測電流ではありません。
+`/pylon/diagnostics`の`estimated_current_a`は、推定effortを`torquePerAmpNm`または`forcePerAmpN`で割った値です。実測電流ではありません。
 
 ## MotorCommand / MotorState
 
-`JointTrajectory`を使わず、単一モーターを型付きTopicで指令することもできます。
+単一モーターをlease付きの型付きTopicで指令します。
 
 | MotorCommand field | 内容 |
 |---|---|
@@ -106,7 +69,7 @@ velocity modeはKSP側で既定0.5秒の通信タイムアウトを持ちます�
 
 ```bash
 ros2 topic pub --once /ksp_vessel/actuators/servo/command \
-  ksp_ros2_interfaces/msg/MotorCommand \
+  pylon_interfaces/msg/MotorCommand \
   "{vessel_id: <vessel-id>, controller_id: manual, lease_id: <lease-id>, sequence: 2, id: servo_12345, mode: 0, enabled: true, position: 1.5708, timeout_sec: 0.5}"
 ```
 
@@ -144,12 +107,12 @@ ros2 topic pub --once /ksp_vessel/actuators/servo/command \
 
 ## 実装確認先
 
-- `GameData/KerbalLiDAR/Parts/RosServo/part.cfg`
-- `GameData/KerbalLiDAR/Parts/RosLinearMotor/part.cfg`
-- `Source/KerbalLiDAR/Api/Ksp/KerbalRosMotorSupport.cs`
-- `Ros2/ksp_lidar_bridge/ksp_lidar_bridge/motor_packets.py`
-- `Ros2/ksp_ros2_interfaces/msg/MotorCommand.msg`
-- `Ros2/ksp_ros2_interfaces/msg/MotorState.msg`
+- `GameData/PyLoN/Parts/RosServo/part.cfg`
+- `GameData/PyLoN/Parts/RosLinearMotor/part.cfg`
+- `Source/PyLoN/Api/Ksp/PyLoNMotorSupport.cs`
+- `Ros2/pylon_bridge/pylon_bridge/motor_packets.py`
+- `Ros2/pylon_interfaces/msg/MotorCommand.msg`
+- `Ros2/pylon_interfaces/msg/MotorState.msg`
 
 ## 可動フィンの個別角度制御
 
@@ -165,7 +128,7 @@ ros2 topic echo /ksp_vessel/actuators/servo/state
 
 ```bash
 ros2 topic pub --once /ksp_vessel/actuators/servo/command \
-  ksp_ros2_interfaces/msg/MotorCommand \
+  pylon_interfaces/msg/MotorCommand \
   "{vessel_id: '<vessel-id>', controller_id: manual, lease_id: '<lease-id>', sequence: 2, id: fin_12345_0, mode: 0, enabled: true, position: 0.174533, timeout_sec: 0.5}"
 ```
 
@@ -175,4 +138,3 @@ ros2 topic pub --once /ksp_vessel/actuators/servo/command \
 - フィンはposition指令にもタイムアウトがあります。既定0.5秒、指定可能範囲0.05～5秒です。保持するにはタイムアウトより短い周期で、lease内の`sequence`を毎回増やして再送してください。lease自体の更新も必要です。
 - `enabled: false`、通信タイムアウト、制御権解放／変更／緊急停止、機体切替、機体のpack時に元のKSP設定へ戻ります。元々展開していた面はその展開設定に戻ります。
 - 状態の`position`は標準モジュールの現在舵角、`target`は制限後の目標角で、単位はradです。速度・トルク・電流は取得できないため0を返します。`powered`は制御可能状態、`enabled`と`command_active`はROSによる上書き中を表します。
-- `--enable-legacy-control`を指定したbridgeでは、既存の`JointTrajectory`でも複数フィンへpositionを送れます。正式な制御権が取得されている間はlegacy指令は拒否されます。

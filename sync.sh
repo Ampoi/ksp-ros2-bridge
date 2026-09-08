@@ -1,153 +1,87 @@
 #!/usr/bin/env bash
-# Build and install the production KSP mod and ROS2 packages from a clean clone.
+# Build and install PyLoN. Demos are opt-in; no Development dependency.
 set -euo pipefail
-
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ksp_dir="${KSPDIR:-$HOME/.local/share/Steam/steamapps/common/Kerbal Space Program}"
-ros2_ws="${ROS2_WS:-$HOME/ros2_ws}"
+ksp_install="${KSPDIR:-$HOME/.local/share/Steam/steamapps/common/Kerbal Space Program}"
+ros_workspace="${ROS2_WS:-$HOME/ros2_ws}"
 ros_setup="${ROS_SETUP:-/opt/ros/jazzy/setup.bash}"
-sync_lock_file="${DEV_SYNC_LOCK_FILE:-${TMPDIR:-/tmp}/kerbal-lidar-dev-sync.lock}"
-
+lock_file="${PYLON_SYNC_LOCK_FILE:-${TMPDIR:-/tmp}/pylon-sync.lock}"
+skip_ksp_build=0; skip_ksp_sync=0; skip_ros2_sync=0; skip_ros2_build=0
+demos=()
 usage() {
-    cat <<USAGE
+    cat <<'USAGE'
 Usage: ./sync.sh [options]
-
-Build and sync KerbalLiDAR into KSP GameData, then sync and build the ROS2 packages.
-
-Options:
-  --skip-ksp-build    Do not rebuild the KSP plugin DLL before syncing.
-  --skip-ksp-sync     Do not copy GameData/KerbalLiDAR into KSP.
-  --skip-ros2-sync    Do not copy ROS2 packages into ROS2_WS/src.
-  --skip-ros2-build   Do not run colcon build for the ROS2 packages.
-  -h, --help          Show this help.
-
-Environment:
-  KSPDIR      KSP install directory. Default: $HOME/.local/share/Steam/steamapps/common/Kerbal Space Program
-  ROS2_WS     ROS2 workspace. Default: $HOME/ros2_ws
-  ROS_SETUP   ROS2 Jazzy setup script. Default: /opt/ros/jazzy/setup.bash
-  DEV_SYNC_LOCK_FILE  Cross-worktree lock file. Default: ${TMPDIR:-/tmp}/kerbal-lidar-dev-sync.lock
+  --demo NAME         Include debris_orbit, position_estimator or mun_rover (repeatable).
+  --all-demos         Include all three demos and optional perception dependencies.
+  --skip-ksp-build    Skip plugin build.
+  --skip-ksp-sync     Skip KSP installation.
+  --skip-ros2-sync    Skip ROS source synchronization.
+  --skip-ros2-build   Skip colcon build.
+  -h, --help          Show help.
+Environment: KSPDIR, ROS2_WS, ROS_SETUP, PYLON_SYNC_LOCK_FILE.
+Core packages: pylon_interfaces, pylon_bridge, pylon_vehicle_control.
+Recognized pre-PyLoN installations are backed up outside GameData/src before replacement.
 USAGE
 }
-
-skip_ksp_build=0
-skip_ksp_sync=0
-skip_ros2_sync=0
-skip_ros2_build=0
-
-while [[ $# -gt 0 ]]; do
+while (($#)); do
     case "$1" in
-        --skip-ksp-build)
-            skip_ksp_build=1
-            shift
-            ;;
-        --skip-ksp-sync)
-            skip_ksp_sync=1
-            shift
-            ;;
-        --skip-ros2-sync)
-            skip_ros2_sync=1
-            shift
-            ;;
-        --skip-ros2-build)
-            skip_ros2_build=1
-            shift
-            ;;
-        -h|--help)
-            usage
-            exit 0
-            ;;
-        *)
-            echo "Unknown argument: $1" >&2
-            usage >&2
-            exit 2
-            ;;
+        --demo)
+            [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+            case "$2" in
+                debris_orbit|position_estimator|mun_rover) demos+=("$2");;
+                *) echo "Unknown demo: $2" >&2; exit 2;;
+            esac
+            shift 2;;
+        --all-demos) demos+=(debris_orbit position_estimator mun_rover); shift;;
+        --skip-ksp-build) skip_ksp_build=1; shift;;
+        --skip-ksp-sync) skip_ksp_sync=1; shift;;
+        --skip-ros2-sync) skip_ros2_sync=1; shift;;
+        --skip-ros2-build) skip_ros2_build=1; shift;;
+        -h|--help) usage; exit 0;;
+        *) echo "Unknown argument: $1" >&2; exit 2;;
     esac
 done
-
-require_dir() {
-    local path="$1"
-    local label="$2"
-    if [[ ! -d "$path" ]]; then
-        echo "$label directory does not exist: $path" >&2
-        exit 1
-    fi
-}
-
-sync_dir() {
-    local source_dir="$1"
-    local target_dir="$2"
-    require_dir "$source_dir" "Source"
-    mkdir -p "$(dirname "$target_dir")"
-    if ! command -v rsync >/dev/null 2>&1; then
-        echo "rsync is required for clean syncs. Install rsync or copy manually." >&2
-        exit 1
-    fi
-    rsync -a --delete "$source_dir/" "$target_dir/"
-}
-
-acquire_sync_lock() {
-    if ! command -v flock >/dev/null 2>&1; then
-        echo "flock is required to prevent concurrent worktree syncs." >&2
-        exit 1
-    fi
-
-    mkdir -p "$(dirname "$sync_lock_file")"
-    exec 9>"$sync_lock_file"
-    if ! flock -n 9; then
-        echo "Another sync.sh is running; waiting for lock: $sync_lock_file"
-        flock 9
-    fi
-}
-
-acquire_sync_lock
-# Compiler build servers may inherit fd 9 and outlive this script. Explicitly
-# unlock the shared file description on exit rather than relying on fd closure.
+command -v flock >/dev/null
+exec 9>"$lock_file"
+flock 9
 trap 'flock -u 9' EXIT
-
-if [[ "$skip_ksp_build" -eq 0 ]]; then
-    "$repo_root/build.sh" --ksp-dir "$ksp_dir"
-fi
-
-if [[ "$skip_ksp_sync" -eq 0 ]]; then
-    require_dir "$ksp_dir/GameData" "KSP GameData"
-    sync_dir "$repo_root/GameData/KerbalLiDAR" "$ksp_dir/GameData/KerbalLiDAR"
-    echo "Synced KSP GameData to: $ksp_dir/GameData/KerbalLiDAR"
-fi
-
-if [[ "$skip_ros2_sync" -eq 0 ]]; then
-    mkdir -p "$ros2_ws/src"
-    sync_dir "$repo_root/Ros2/ksp_ros2_interfaces" "$ros2_ws/src/ksp_ros2_interfaces"
-    sync_dir "$repo_root/Ros2/ksp_lidar_bridge" "$ros2_ws/src/ksp_lidar_bridge"
-    sync_dir "$repo_root/Ros2/ksp_vehicle_control" "$ros2_ws/src/ksp_vehicle_control"
-    sync_dir "$repo_root/Ros2/ksp_nav2_bringup" "$ros2_ws/src/ksp_nav2_bringup"
-    sync_dir "$repo_root/Demo/debris_orbit" "$ros2_ws/src/debris_orbit"
-    sync_dir "$repo_root/Demo/position_estimator" "$ros2_ws/src/position_estimator"
-    echo "Synced ROS2 interface package to: $ros2_ws/src/ksp_ros2_interfaces"
-    echo "Synced ROS2 bridge package to: $ros2_ws/src/ksp_lidar_bridge"
-    echo "Synced ROS2 vehicle control package to: $ros2_ws/src/ksp_vehicle_control"
-    echo "Synced ROS2 Nav2 package to: $ros2_ws/src/ksp_nav2_bringup"
-    echo "Synced debris orbit demo to: $ros2_ws/src/debris_orbit"
-    echo "Synced position estimator demo to: $ros2_ws/src/position_estimator"
-fi
-
-if [[ "$skip_ros2_build" -eq 0 ]]; then
-    if [[ -f "$ros_setup" ]]; then
-        # shellcheck disable=SC1090
-        set +u
-        source "$ros_setup"
-        set -u
-    else
-        echo "ROS2 setup script does not exist: $ros_setup" >&2
-        echo "Install ROS2 Jazzy or set ROS_SETUP to its setup.bash." >&2
-        exit 1
+packages=(pylon_interfaces pylon_bridge pylon_vehicle_control)
+source_dirs=(Ros2/pylon_interfaces Ros2/pylon_bridge Ros2/pylon_vehicle_control)
+for demo in "${demos[@]}"; do
+    package="pylon_demo_$demo"
+    if [[ " ${packages[*]} " != *" $package "* ]]; then
+        packages+=("$package"); source_dirs+=("Demo/$package")
     fi
-    if [[ "${ROS_DISTRO:-}" != "jazzy" ]]; then
-        echo "ROS2 Jazzy is required, but ROS_DISTRO is '${ROS_DISTRO:-unset}'." >&2
-        echo "Set ROS_SETUP to the setup.bash for a ROS2 Jazzy installation." >&2
-        exit 1
+    if [[ "$demo" != debris_orbit && " ${packages[*]} " != *" pylon_perception "* ]]; then
+        packages+=(pylon_perception); source_dirs+=(Ros2/pylon_perception)
     fi
-    cd "$ros2_ws"
-    colcon build --packages-up-to ksp_lidar_bridge ksp_vehicle_control ksp_nav2_bringup debris_orbit position_estimator
+done
+sync_dir() {
+    [[ -d "$1" ]] || { echo "Missing source: $1" >&2; exit 1; }
+    mkdir -p "$2"
+    rsync -a --delete --exclude __pycache__ --exclude '*.pyc' --exclude .pytest_cache "$1/" "$2/"
+}
+if (( !skip_ksp_build )); then "$repo_root/build.sh" --ksp-dir "$ksp_install"; fi
+if (( !skip_ksp_sync )); then
+    [[ -d "$ksp_install/GameData" ]] || { echo "Missing KSP GameData: $ksp_install" >&2; exit 1; }
+    python3 "$repo_root/Migration/pylon_migrate.py" --retire-install --apply --ksp-dir "$ksp_install"
+    target="$ksp_install/GameData/PyLoN"
+    mkdir -p "$target/Config"
+    # Runtime.cfg is user configuration: seed once, then preserve on upgrades.
+    if [[ ! -f "$target/Config/Runtime.cfg" ]]; then cp "$repo_root/GameData/PyLoN/Config/Runtime.cfg" "$target/Config/Runtime.cfg"; fi
+    rsync -a --delete --exclude Config/Runtime.cfg "$repo_root/GameData/PyLoN/" "$target/"
 fi
-
-echo "Done."
+if (( !skip_ros2_sync )); then
+    python3 "$repo_root/Migration/pylon_migrate.py" --retire-install --apply --ros2-ws "$ros_workspace"
+    for i in "${!packages[@]}"; do sync_dir "$repo_root/${source_dirs[$i]}" "$ros_workspace/src/${packages[$i]}"; done
+fi
+if (( !skip_ros2_build )); then
+    [[ -f "$ros_setup" ]] || { echo "Missing ROS setup: $ros_setup" >&2; exit 1; }
+    set +u
+    source "$ros_setup"
+    set -u
+    [[ "${ROS_DISTRO:-}" == jazzy ]] || { echo 'ROS 2 Jazzy is required' >&2; exit 1; }
+    cd "$ros_workspace"
+    colcon build --packages-up-to "${packages[@]}"
+fi
+printf 'PyLoN sync complete. Packages: %s\n' "${packages[*]}"

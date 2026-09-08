@@ -1,6 +1,6 @@
 # システム概要
 
-KerbalLiDARは、KSP 1.xのFlightシーンとROS2ノードの間を2本のUDP経路で接続します。ROS2側では、用途ごとに標準メッセージへ変換されたTopicだけを扱えばよく、UDP JSONを直接処理する必要はありません。
+PyLoNは、KSP 1.xのFlightシーンとROS2ノードの間を2本のUDP経路で接続します。ROS2側では、用途ごとに標準メッセージへ変換されたTopicだけを扱えばよく、UDP JSONを直接処理する必要はありません。
 
 <div class="topic-flow">
   <div><strong>KSP plugin</strong>センサー、機体状態、Ground TruthをUDP 49010へ送信</div>
@@ -23,13 +23,13 @@ KerbalLiDARは、KSP 1.xのFlightシーンとROS2ノードの間を2本のUDP経
 
 | KSP側 | ROS2側の主なAPI | 役割 |
 |---|---|---|
-| Kerbal LiDAR 2D | `sensor_msgs/msg/LaserScan` | 平面距離スキャン |
-| Kerbal LiDAR 3D | `sensor_msgs/msg/PointCloud2` | 前方半球点群 |
-| Kerbal ROS2 RGB Camera | `Image` + `CameraInfo` | RGB画像と内部パラメーター |
-| ROS2 Size-0 Axial Servo | `JointTrajectory` / `JointState` | 回転軸制御 |
-| ROS2 Telescoping I-Beam Actuator | `JointTrajectory` / `JointState` | 最大約2倍に伸びる直動軸制御 |
+| PyLoN LiDAR 2D | `sensor_msgs/msg/LaserScan` | 平面距離スキャン |
+| PyLoN LiDAR 3D | `sensor_msgs/msg/PointCloud2` | 前方半球点群 |
+| PyLoN RGB Camera | `Image` + `CameraInfo` | RGB画像と内部パラメーター |
+| ROS2 Size-0 Axial Servo | `MotorCommand` / `JointState` | 回転軸制御 |
+| ROS2 Telescoping I-Beam Actuator | `MotorCommand` / `JointState` | 最大約2倍に伸びる直動軸制御 |
 | KSP標準Engine / RCS | `String` / `Float64` / `Twist` | 推進・6軸入力 |
-| KSP標準Wheel / Engine / RCS | `ksp_ros2_interfaces` | パーツ単位の型付き制御・状態 |
+| KSP標準Wheel / Engine / RCS | `pylon_interfaces` | パーツ単位の型付き制御・状態 |
 | KSP標準ドッキングポート | `DockingPortCommand/State` + `Image` | 状態、切離し、選択式ポートカメラ |
 | active vessel | `BodyWrenchCommand` / `WrenchFeedback` / `PoseStamped` | 所有権付き機体要求・実現量・Ground Truth |
 
