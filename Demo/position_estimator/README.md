@@ -23,7 +23,7 @@
 リポジトリ直下で次を実行すると、bridge、interfaces、Nav2、debris_orbitと一緒にこのデモも`~/ros2_ws`へ同期・ビルドされます。
 
 ```bash
-./dev_sync.sh
+./sync.sh
 source ~/ros2_ws/install/setup.bash
 ```
 

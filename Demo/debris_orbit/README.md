@@ -17,14 +17,7 @@ IMU ─ ジャイロ積分・比力予測 ─┘               │              
 
 全6軸を操作できるRCS、3D LiDAR（Sensor ID `front_lidar`）、LiDARと同方向を向くカメラ（`orbit_camera`）を搭載します。センサー取付位置・姿勢は、機体内のTFから取得します。
 
-`ROS2 debug`の`test A`を使う場合:
-
-```bash
-./dev_sync.sh
-./Development/commands/dev_debug.sh \
-  --save 'ROS2 debug' --vessel 'test A' --launch-craft \
-  --lidar-profile long --no-teleport --keep-session
-```
+[起動手順](../../docs/guide/getting-started.md)に従ってビルド・同期し、KSPの通常操作で機体を開いてください。
 
 Flightが開いたら別ターミナルでbridgeを起動します。`--disable-ground-truth`は真値パケットを破棄し、真値Topicとworld TFを配信しません。機体ID・lifecycleもIMUパケットから取得します。
 
@@ -35,11 +28,9 @@ ros2 run ksp_lidar_bridge udp_bridge \
   --host 127.0.0.1 --port 49010 --disable-ground-truth
 ```
 
-別ターミナルから軌道投入・分離し、すぐにデモを起動します。`dev_teleport.sh`はKSPの軌道投入応答後に10秒待ち、packing/unpacking直後の分離を避けます。準備用のteleportは飛行開始位置を用意する開発コマンドで、推定・制御へ状態を渡しません。
+KSPの通常操作で軌道投入・分離を行い、機体の状態が安定したら別ターミナルでデモを起動します。
 
 ```bash
-./Development/commands/dev_teleport.sh lko
-./Development/commands/dev_separate.sh
 source /opt/ros/jazzy/setup.bash
 source ~/ros2_ws/install/setup.bash
 ros2 launch debris_orbit debris_orbit.launch.py \
@@ -90,26 +81,7 @@ Topicルートは`/ksp_vessel/demos/debris_orbit/<demo_instance_id>`:
 
 センサー時刻はKSP universal timeに一定offsetを加えた連続時刻です。遅れた画像やゲームの処理速度に合わせて飛行中にoffsetを飛ばすことはありません。nodeの受信鮮度判定には別途ROS時計を使います。
 
-## 実機記録とテスト
-
-[LiDAR＋IMUだけで制御したKSP実機の試験記録](../../Development/evidence/debris_orbit_imu/README.md)に、真値比較グラフ、実際のRViz・KSP画面、36度ごとの写真をまとめています。
-
-```bash
-python3 Development/tools/record_sensor_orbit.py \
-  --instance test_a_imu --output /tmp/imu_orbit_trial --degrees 400
-```
-
-真値と比較してデバッグする場合はbridgeから`--disable-ground-truth`を外し、次の評価器を使います。推定器・誘導器・制御器の接続は変更しません。
-
-```bash
-python3 Development/tools/record_debris_orbit.py \
-  --instance test_a_imu --imu-navigation \
-  --output /tmp/imu_orbit_evaluation --stop-after-turns 1.12
-```
-
-評価器内で初期IMU座標系と真値の座標系を一度だけ回転整列し、時刻を合わせて相対位置・速度・姿勢・実際のLiDAR光軸を比較します。真値ENU軸は惑星と一緒に回るため、評価専用`ground_truth/frame_angular_velocity`でその回転と相対速度の輸送項も補正します。この整列や補正はTFや制御Topicへ一切配信しません。
-
-最初の`record_sensor_orbit.py`記録器は真値を購読しません。記録する角度・距離・指向誤差は推定座標系での値です。[旧真値併用版の試験記録](../../Development/evidence/debris_orbit/README.md)と区別してください。
+## テスト
 
 ```bash
 source /opt/ros/jazzy/setup.bash

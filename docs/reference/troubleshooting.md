@@ -62,7 +62,7 @@ camera frameは全UDPチャンクが揃った場合だけpublishします。ま�
 
 ## KSP DLLが更新されない
 
-KSP実行中は新しいDLLを読み直せません。KSPを終了してから`./dev_sync.sh`を再実行し、KSPを起動し直してください。
+KSP実行中は新しいDLLを読み直せません。KSPを終了してから`./sync.sh`を再実行し、KSPを起動し直してください。
 
 ## ログ
 

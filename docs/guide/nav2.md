@@ -20,7 +20,7 @@ Nav2のTFは`map -> lidar_odom -> nav_base_link`です。bridgeのGround Truth T
 
 ```bash
 sudo apt install ros-jazzy-navigation2 ros-jazzy-nav2-bringup ros-jazzy-slam-toolbox
-./dev_sync.sh --skip-ksp-build --skip-ksp-sync
+./sync.sh --skip-ksp-build --skip-ksp-sync
 ```
 
 bridgeとKSP Flightを起動した後、実際のSensor IDを指定します。

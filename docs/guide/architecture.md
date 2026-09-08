@@ -15,9 +15,10 @@
 | `Ros2/ksp_vehicle_control` | 再利用可能な6DoF制御domainとlease workflow |
 | `Ros2/ksp_nav2_bringup` | SLAM/Nav2固有のintegration adapter |
 | `Demo` | 公開APIだけを使う実行例。共通制御は置かない |
-| `Development` / `Tools` | build、sync、KSP live debugなどの開発専用ツール |
+| `build.sh` / `build.ps1` / `sync.sh` | 公開ソースだけで完結する本番ビルド・同期 |
+| `Development`（ローカル専用・Git対象外） | デバッグ補助、検証コード、記録、モデル編集元 |
 
-ルートの`dev_sync.sh`、`dev_debug.sh`、`dev_teleport.sh`は後方互換の薄い入口です。実装は`Development/commands`にあり、KSP modやROS2 packageにはインストールされません。
+`Development/`、旧`Tools/`、`dev_*.sh`はGit管理から除外します。本番C#プロジェクトはコンパイル対象を明示し、デバッグ用controllerを除外します。クリーンなcloneから`./sync.sh`でビルド・同期でき、ローカル開発用ファイルは不要です。
 
 ## 制御の境界
 

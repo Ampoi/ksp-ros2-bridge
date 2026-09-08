@@ -37,7 +37,7 @@ kRPCは使用しません。KSPプラグインがセンサー取得と機体制�
 - 各RCSノズルの位置・方向に基づくWrench配分と実現量feedback
 - 共通の`ControlSetpoint`→安全な6DoF機体制御package
 
-コードの責務と依存方向は[モノレポ設計](ARCHITECTURE.md)にまとめています。実行例は`Demo/`、開発用commandの実体は`Development/`で、KSP/ROS2 runtime sourceとは分離しています。
+コードの責務と依存方向は[モノレポ設計](ARCHITECTURE.md)にまとめています。実行例は`Demo/`にあります。`./sync.sh`で本番MODとROS2をビルド・同期できます。開発用コード・検証記録・モデル編集元はローカル専用の`Development/`へ分離し、Git管理・本番ビルドの対象から除外しています。
 
 ## ビルド
 
@@ -217,7 +217,7 @@ Ground Truthは操作機体を選択した地点を原点とする東・北・�
 
 `Ros2/ksp_nav2_bringup`はbridgeと分離したROS2 integration packageです。2D `LaserScan`だけからscan-to-scan ICP odometryを作り、SLAM Toolbox / AMCL / Nav2へ接続します。planar controllerは`cmd_vel`が有効な間だけauthority leaseを取得し、停止後に解放します。起動方法と制約は[2D LiDAR MappingとNav2](docs/guide/nav2.md)を参照してください。
 
-実機体を使って上から実行できる手順は、[`test A`デブリ周回](Demo/debris_orbit/README.md#実機の準備と起動)と[`rober A` SLAM + Nav2](Ros2/ksp_nav2_bringup/README.md#rober-aで上から順に実行する手順)に分けています。デブリ周回は位置推定とRCS制御を分離し、3D LiDAR＋IMUで真値を使わずに周回し、36度ごとに機体カメラで撮影します。RVizで対象点群・視線・相対軌跡を表示します。`Development/commands`のKSP準備commandは再現試験専用で、runtime source/APIとは分離されています。
+実機体を使って上から実行できる手順は、[`test A`デブリ周回](Demo/debris_orbit/README.md#実機の準備と起動)と[`rober A` SLAM + Nav2](Ros2/ksp_nav2_bringup/README.md#rober-aで上から順に実行する手順)に分けています。デブリ周回は位置推定とRCS制御を分離し、3D LiDAR＋IMUで真値を使わずに周回し、36度ごとに機体カメラで撮影します。RVizで対象点群・視線・相対軌跡を表示します。KSPの通常の操作で機体を準備して実行します。
 
 ## ROS2モーター
 
@@ -321,31 +321,3 @@ ros2 topic pub -r 5 /ksp_vessel/actuators/rcs/twist_command geometry_msgs/msg/Tw
   "hitMask": [1, 1, 0]
 }
 ```
-
-簡易受信:
-
-```powershell
-python .\Tools\lidar_udp_listener.py --port 49010
-```
-
-## 並列開発（Git worktree）
-
-機能ごとに独立したブランチと作業ディレクトリを作成できます。worktreeは既定でリポジトリ内の`.worktrees/`へ作られ、このディレクトリ自体はGit管理から除外されます。
-
-```bash
-# work/ros2-refactorブランチと対応するworktreeを作成
-./Tools/worktree.sh create ros2-refactor
-cd .worktrees/ros2-refactor
-
-# 確認と削除
-./Tools/worktree.sh list
-cd ../..
-./Tools/worktree.sh remove ros2-refactor
-git branch -d work/ros2-refactor
-```
-
-各worktreeでは変更を小さくコミットし、元のworktreeから`git merge --no-ff work/<name>`で統合します。同じブランチを複数のworktreeで同時にcheckoutすることはできません。
-
-主worktreeにローカル.NET SDK（`.dotnet` / `.dotnet-linux-net8`）やNuGetキャッシュ（`.nuget`）がある場合、作成したworktreeからsymlinkで共有されます。大容量の開発依存をworktreeごとに複製せず、KSPプラグインを同じ環境でビルドできます。
-
-`dev_sync.sh`の同期先であるKSP本体とROS2ワークスペースは全worktreeで共有されます。スクリプト同士はファイルロックで直列化されますが、後から実行したブランチの内容が共有先へ反映されます。各worktree内のローカルなテストとビルドは並行し、共有先への最終同期は統合後に一つのworktreeから実行してください。ロックファイルは`DEV_SYNC_LOCK_FILE`で変更できます。

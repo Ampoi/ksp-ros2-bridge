@@ -7,7 +7,7 @@
 リポジトリのルートで実行します。
 
 ```bash
-./dev_sync.sh
+./sync.sh
 ```
 
 このスクリプトは次を順番に行います。
@@ -23,10 +23,10 @@
 KSPDIR="/path/to/Kerbal Space Program" \
 ROS2_WS="$HOME/ros2_ws" \
 ROS_SETUP="/opt/ros/jazzy/setup.bash" \
-./dev_sync.sh
+./sync.sh
 ```
 
-`dev_sync.sh`はsource後の`ROS_DISTRO`も検査し、Jazzy以外の環境を誤って使った場合はビルド前に停止します。
+`sync.sh`はsource後の`ROS_DISTRO`も検査し、Jazzy以外の環境を誤って使った場合はビルド前に停止します。
 
 ::: details 手動でROS2 bridgeだけを配置する場合
 ```bash
@@ -73,15 +73,6 @@ data: listening
 - センサーは右クリックの`Edit ROS2 Part Name`でわかりやすい名前を付ける
 - サーボとリニアモーターは`bottom`側を親、駆動対象を`top`側へ取り付ける
 - Flightへ移動する
-
-開発用の保存機体を直接開く場合は`dev_debug.sh`も使えます。`--with-ros2`は同期とROS2ビルドも行いますが、bridgeプロセス自体は別ターミナルで起動してください。
-
-```bash
-./dev_debug.sh --with-ros2 \
-  --save "ROS2 debug" \
-  --vessel "My Rover" \
-  --location runway
-```
 
 ## 4. Topicを確認
 

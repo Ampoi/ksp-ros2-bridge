@@ -8,6 +8,7 @@
     <OutputPath>..\..\GameData\KerbalLiDAR\Plugins\</OutputPath>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(KSPDIR)' == ''">
@@ -21,6 +22,12 @@
   <PropertyGroup Condition="'$(KSPManagedDir)' == ''">
     <KSPManagedDir>$(KSPDIR)\KSP_x64_Data\Managed</KSPManagedDir>
   </PropertyGroup>
+
+  <!-- Only production layers are compiled. Local tooling is never imported. -->
+  <ItemGroup>
+    <Compile Include="Domain/**/*.cs;Application/**/*.cs;Api/Ksp/**/*.cs;Properties/AssemblyInfo.cs"
+             Exclude="Api/Ksp/**/Debug*.cs;Api/Ksp/**/KerbalRosFinSupport.cs" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net48" Version="1.0.3" PrivateAssets="all" />

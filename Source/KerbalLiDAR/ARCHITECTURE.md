@@ -46,3 +46,11 @@ for controller ownership. Every formal command targets the active vessel ID and
 an acknowledged lease. SAS suppression, emergency stop, timeouts, angular-rate
 limits, command slew, and continuous-actuation limits execute in this process so
 they do not depend on ROS callback health.
+
+## Production build boundary
+
+The project explicitly compiles `Domain`, `Application`, `Api/Ksp`, and
+`Properties/AssemblyInfo.cs`. Debug controllers and local development code are
+excluded. Production code must not import files or build targets from the
+ignored `Development/` tree. Local probes, evidence and authoring assets stay
+there; only distributable models belong under `GameData/`.

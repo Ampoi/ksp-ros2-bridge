@@ -17,7 +17,8 @@ domain code, while domain code never imports KSP, Unity, ROS2, or demo code.
 | `Ros2/ksp_vehicle_control/adapters` | ROS2 controller nodes | application/domain + interfaces |
 | `Ros2/ksp_nav2_bringup` | Nav2/SLAM integration adapter | public ROS2 contracts |
 | `Demo` | Runnable examples and experiment configuration | public ROS2 packages only |
-| `Development` / `Tools` | Build, sync, debug, and repository tooling | never imported by runtime code |
+| `build.sh` / `build.ps1` / `sync.sh` | Reproducible production build and installation | production sources only |
+| `Development` (local, ignored) | Debug helpers, probes, evidence, asset authoring | excluded from Git and production compilation |
 
 ## Vehicle-control aggregate
 
@@ -54,5 +55,8 @@ and residual wrench instead of claiming exact force realization.
 `Demo/` is intentionally not a source of reusable control or bridge behavior.
 The debris-orbit demo publishes a `ControlSetpoint`; `ksp_vehicle_control`
 implements the controller. Nav2 owns only its planar adapter. `Development/`
-contains command implementations, while root `dev_*.sh` files are compatibility
-entrypoints. No runtime package imports either directory.
+is local-only and ignored, including its C# helpers, probes, evidence and asset
+authoring sources. Legacy `Tools/` and root `dev_*.sh` entrypoints are also
+ignored. Production builds work from a clean clone without these directories.
+The C# project explicitly includes only its production layers and excludes
+debug controllers. `sync.sh` builds and installs only the production output.

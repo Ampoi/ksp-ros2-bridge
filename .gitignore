@@ -22,3 +22,15 @@ GameData/KerbalLiDAR/Plugins/*.pdb
 
 /debris_orbit_captures/
 /Development/evidence/**/samples.jsonl
+
+# Local development sources, probes, evidence, authoring assets and old entrypoints.
+/Development/
+/Tools/
+/dev
+/dev_*.sh
+/DEBUG_LAUNCH.md
+/log/
+/.demo-output/
+/debris_orbit_captures.zip
+/Source/KerbalLiDAR/**/Debug*.cs
+/Source/KerbalLiDAR/**/KerbalRosFinSupport.cs

@@ -28,23 +28,15 @@ sudo apt install ros-jazzy-navigation2 ros-jazzy-nav2-bringup ros-jazzy-slam-too
 
 ## `rober A`で上から順に実行する手順
 
-以下は実際のKSP保存データ`ROS2 debug`で確認した手順です。ユーザー向けの機体名は rover A ですが、現在のsave内の名前は **`rober A`** なので、開発用起動commandではこの綴りをそのまま使います。LiDARのSensor IDは`lidar_755b97e1`です。
+以下は実際のKSP保存データ`ROS2 debug`で確認した手順です。ユーザー向けの機体名は rover A ですが、現在のsave内の名前は **`rober A`** なので、KSP上でこの名前の機体を選びます。LiDARのSensor IDは`lidar_755b97e1`です。
 
 最初にリポジトリ直下で同期します。
 
 ```bash
-./dev_sync.sh
+./sync.sh
 ```
 
-ターミナル1でKSPを起動します。`Development/commands`以下はローカルKSPを再現可能な状態へ準備する開発・実機試験専用commandで、ModやROS2 runtimeの公開APIではありません。
-
-```bash
-./Development/commands/dev_debug.sh \
-  --save "ROS2 debug" \
-  --vessel "rober A" \
-  --no-teleport \
-  --keep-session
-```
+ターミナル1で通常どおりKSPを起動し、保存済みのローバーを開いてください。
 
 Flight画面が開いた後、ターミナル2でbridgeを起動します。
 

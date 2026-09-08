@@ -28,3 +28,8 @@ If only one side changed, scoped runs are acceptable:
 ```
 
 Before reporting completion, mention whether `./dev_sync.sh` succeeded. If it cannot run because external paths require approval or are missing, state that clearly and include the exact command that should be run.
+
+The tracked production entrypoint is `./sync.sh`. `./dev_sync.sh` is an
+optional, ignored local compatibility command; when it is absent in a clean
+clone, run `./sync.sh` with the same scope flags instead. Production builds
+must not include or depend on files under `Development/` or legacy `Tools/`.
