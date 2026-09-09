@@ -523,7 +523,7 @@ namespace PyLoN
                 try
                 {
                     var endpoint = ResolveEndpoint(RuntimeSettings.StateHost, RuntimeSettings.StatePort);
-                    var bytes = Encoding.UTF8.GetBytes(RuntimeSession.Wrap(motor.BuildStatePacket()));
+                    var bytes = TelemetryPacketCodec.Encode(motor.BuildStatePacket());
                     stateClient.Send(bytes, bytes.Length, endpoint);
                 }
                 catch (Exception exception)

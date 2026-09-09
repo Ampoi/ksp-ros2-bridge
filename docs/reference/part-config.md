@@ -1,6 +1,6 @@
 # パーツ設定
 
-標準設定は`GameData/PyLoN/Parts/*/part.cfg`にあります。変更後はKSPを再起動してDLLとCFGを読み直してください。
+インストール先の標準設定は`GameData/PyLoN/Parts/*/part.cfg`にあります。ソースから開発する場合の原本は`Assets/PyLoN/Parts/*/part.cfg`です。リポジトリ内の`GameData/`はビルドごとに再生成されます。変更後はKSPを再起動してDLLとCFGを読み直してください。
 
 ## LiDAR共通
 

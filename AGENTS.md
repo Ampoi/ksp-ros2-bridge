@@ -34,6 +34,11 @@ optional, ignored local development entrypoint backed by `Development/commands/`
 when it is absent in a clean clone, run `./sync.sh` with the same scope flags instead. Production builds
 must not include or depend on files under `Development/` or legacy `Tools/`.
 
+Tracked mod assets live under `Assets/PyLoN/`. `GameData/` is an ignored,
+disposable build output assembled from those assets and the plugin DLL; edit
+the tracked originals instead. `./package.sh vX.Y.Z` creates ignored release
+archives under `dist/` for manual upload to GitHub Releases.
+
 Before investigative debugging or work on KSP implementation details, read
 `Development/AGENTS.md` when that local file exists. Keep probes, experimental
 code, evidence, and authoring sources under ignored `Development/`; production

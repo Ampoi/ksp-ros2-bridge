@@ -1,7 +1,6 @@
 using System;
 using System.Net;
 using System.Net.Sockets;
-using System.Text;
 using UnityEngine;
 
 namespace PyLoN
@@ -9,13 +8,16 @@ namespace PyLoN
     /// <summary>One bounded command socket per flight, independent of actuator registration.</summary>
     internal sealed class CommandReceiver : IDisposable
     {
-        private readonly Action<PyLoNMotorCommand> motorCommand;
+        private readonly CommandDispatcher dispatcher;
         private readonly Action<string> warn;
         private UdpClient client;
         private int port;
 
         public CommandReceiver(Action<PyLoNMotorCommand> motorCommand, Action<string> warn)
-        { this.motorCommand = motorCommand; this.warn = warn; }
+        {
+            dispatcher = new CommandDispatcher(motorCommand);
+            this.warn = warn;
+        }
 
         public void Pump()
         {
@@ -37,12 +39,7 @@ namespace PyLoN
                 {
                     IPEndPoint sender = null;
                     var bytes = client.Receive(ref sender);
-                    var json = Encoding.UTF8.GetString(bytes);
-                    if (!RuntimeSession.Accept(JsonUtility.FromJson<PyLoNCommandEnvelope>(json))) continue;
-                    if (PyLoNVehicleManager.TryDispatch(json, port) || PyLoNDockingManager.TryDispatch(json, port)) continue;
-                    var command = JsonUtility.FromJson<PyLoNMotorCommand>(json);
-                    if (command != null && command.type == "pylon_motor_command" && command.version == 1)
-                        motorCommand(command);
+                    dispatcher.Dispatch(bytes, port);
                 }
                 catch (SocketException ex)
                 {

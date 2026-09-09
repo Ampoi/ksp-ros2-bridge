@@ -13,15 +13,18 @@ PyLoN is a KSP sensor, vessel-model and control platform. LiDAR is one sensor ad
 | Ros2/pylon_perception | Optional point-cloud primitives | NumPy |
 | Demo | Three runnable examples | Public packages only |
 | Migration | One-shot conversion and recognized-install retirement | Python standard library |
+| Assets/PyLoN | Tracked distribution assets: CFG, models and textures | Copied into generated GameData/PyLoN during build |
 | Development | Ignored local probes, authoring and evidence | Never a production dependency |
 
 ## Services and state
 
-The bridge composes sensor, camera, model, flight-session, control, vehicle-state and star-tracker services. The node owns ROS entities and their shared context; domain SessionTracker owns flight identity and SimulationClock owns the fixed time mapping. UdpTransport owns the socket and binds outgoing commands to the currently observed session. No dynamic method forwarding or mixin inheritance is used.
+The bridge composes sensor, camera, model, flight-session, control, vehicle-state and star-tracker services. The node owns ROS entities and their shared context. BridgeRuntime owns flight-scoped communication state, composing SessionTracker, SimulationClock and packet assemblers; BridgeConnection owns bounded polling and session-bound command sending. UdpTransport only receives and sends bytes. The application layer imports no ROS messages or node APIs. No dynamic method forwarding or mixin inheritance is used.
 
-In KSP, RuntimeSession owns process identity and flight generations. A dedicated heartbeat works without LiDAR or ground truth. RuntimeSettings owns the common transport destination. CommandReceiver owns one bounded command socket independently of motor registration. The model producer never reads LiDAR settings. VesselTelemetry owns truth origins and derivatives independently of control authority. ActuatorTelemetry owns read-only actuator publication and wheel geometry, with VesselParts providing shared enumeration. FrameConversions and JsonPacketWriter provide common frame/unit and packet-value conversion.
+In KSP, RuntimeSession owns process identity and flight generations. A dedicated heartbeat works without LiDAR or ground truth. RuntimeSettings owns the common transport destination. CommandReceiver owns one bounded command socket independently of motor registration; CommandDispatcher decodes and validates the common envelope once before invoking command adapters. TelemetryPacketCodec adds the common v1 envelope for every producer, and UdpPacketSender shares LiDAR/model socket and endpoint handling. The model producer never reads LiDAR settings. VesselTelemetry owns truth origins and derivatives independently of control authority. ActuatorTelemetry owns read-only actuator publication and wheel geometry, with VesselParts providing shared enumeration. FrameConversions and JsonPacketWriter provide common frame/unit and packet-value conversion.
 
 KspSceneRgbCapture orchestrates cameras; SourceCamera owns save/restore; RgbCaptureResources owns screen-sized intermediate targets, output buffers and readback. Existing temporal-effect compatibility remains isolated in the capture adapter and antialiasing guard.
+
+See [Bridge communication boundary](Ros2/pylon_bridge/ARCHITECTURE.md) for ownership and the future middleware split.
 
 ## Wire and lifecycle contract
 
@@ -32,5 +35,7 @@ Sampling uses KSP universal time; receiving and expiration use monotonic wall ti
 `/ksp_vessel` remains the vessel Topic prefix. Ground truth is optional evaluation output. It does not create lifecycle identity. `base_link` is the center-of-mass frame; fixed part/sensor mounts use `/tf_static`, moving mounts and the CoM-to-root edge use `/tf`. Sensor IDs remain configurable.
 
 ## Build boundary
+
+`GameData/` and `dist/` are ignored build outputs. The C# build assembles `GameData/PyLoN` from `Assets/PyLoN` and the plugin DLL. `package.sh` builds a Release ZIP locally for manual upload to GitHub Releases; KSP/Unity reference assemblies are not distributed. See [RELEASING.md](RELEASING.md).
 
 `sync.sh` builds the three core ROS packages by default. `--demo` selects a named demo; `--all-demos` selects all three. Optional dependencies are never imported by core packages. The explicit C# compile list excludes local debugging sources. Public builds do not import Development, Tools, debug projects or their outputs.

@@ -98,7 +98,7 @@ namespace PyLoN
             }
 
             var host = string.IsNullOrEmpty(udpHost) ? "127.0.0.1" : udpHost;
-            return IPAddress.IsLoopback(ResolveAddress(host));
+            return IPAddress.IsLoopback(UdpPacketSender.ResolveAddress(host));
         }
 
         private void SendActiveVesselUrdf()

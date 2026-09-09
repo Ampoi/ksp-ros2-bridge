@@ -1,4 +1,4 @@
-import json
+from .protocol import decode_datagram  # Backward-compatible import.
 import math
 import re
 from dataclasses import dataclass
@@ -27,18 +27,6 @@ class LaserScanData:
 class SensorPose:
     translation: Vector3
     rotation: Quaternion
-
-
-def decode_datagram(data: bytes) -> Dict[str, Any]:
-    packet = json.loads(data.decode("utf-8"))
-    if not isinstance(packet, dict):
-        raise ValueError("packet root must be a JSON object")
-    packet_type = packet.get("type")
-    if not isinstance(packet_type, str) or not packet_type.startswith("pylon_"):
-        raise ValueError("unsupported protocol; expected PyLoN")
-    if type(packet.get("version")) is not int or packet["version"] != 1:
-        raise ValueError("unsupported PyLoN protocol version")
-    return packet
 
 
 def expired_topic_names(

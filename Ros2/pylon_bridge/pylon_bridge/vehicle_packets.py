@@ -1,4 +1,4 @@
-import json
+from .protocol import encode_datagram
 import math
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Set, Tuple
@@ -331,4 +331,4 @@ def actuator_command(
 
 
 def encode_vehicle_command(command: Mapping[str, Any]) -> bytes:
-    return json.dumps(command, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    return encode_datagram(command)

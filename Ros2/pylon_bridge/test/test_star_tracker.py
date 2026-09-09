@@ -132,7 +132,7 @@ class UdpRosTests(unittest.TestCase):
         listener.create_subscription(StarTrackerState, prefix + '/state', states.append, 10)
         listener.create_subscription(QuaternionStamped, prefix + '/attitude', attitudes.append, 10)
         sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        endpoint = bridge.sock.getsockname()
+        endpoint = bridge.transport.local_endpoint
         session = dict(type='pylon_session',version=1,runtimeInstance='test',runtimeGeneration=1,
                        runtimeEpoch='epoch',runtimeVesselId='a'*32,vesselId='a'*32,
                        vesselName='test',available=True,universalTime=1.)
@@ -160,7 +160,7 @@ class UdpRosTests(unittest.TestCase):
             self.assertEqual(len(attitudes), before)
         finally:
             sender.close()
-            bridge.sock.close()
+            bridge.connection.close()
             executor.shutdown()
             listener.destroy_node()
             bridge.destroy_node()

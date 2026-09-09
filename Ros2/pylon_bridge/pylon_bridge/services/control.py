@@ -1,10 +1,9 @@
 from typing import Any, Dict
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from pylon_interfaces.msg import BodyWrenchCommand, ControlAuthorityCommand, ControlAuthorityState, DockingPortCommand, MotorCommand, WrenchFeedback
-from ..docking_packets import encode_docking_port_command
+from ..docking_packets import docking_port_command
 from ..packet_conversion import sanitize_ros_name
-from ..motor_packets import encode_motor_command
-from ..vehicle_packets import actuator_command, body_wrench_command, control_authority_command, encode_vehicle_command
+from ..vehicle_packets import actuator_command, body_wrench_command, control_authority_command
 from ..domain.control import authority_state_from_packet, wrench_feedback_from_packet
 
 class ControlService:
@@ -81,7 +80,7 @@ class ControlService:
 
     def send_vehicle_packet(self, command: Dict[str, Any], label: str) -> None:
         try:
-            self.bridge.transport.send(encode_vehicle_command(command), self.bridge.command_endpoint)
+            self.bridge.connection.send_command(command)
         except (OSError, ValueError) as exc:
             self.bridge.get_logger().warning(f"{label} UDP send failed: {exc}")
 
@@ -90,8 +89,8 @@ class ControlService:
     ) -> None:
         sequence = int(message.sequence)
         try:
-            payload = encode_docking_port_command(name, message.action, sequence, message.vessel_id, message.controller_id, message.lease_id)
-            self.bridge.transport.send(payload, self.bridge.command_endpoint)
+            command = docking_port_command(name, message.action, sequence, message.vessel_id, message.controller_id, message.lease_id)
+            self.bridge.connection.send_command(command)
         except ValueError as exc:
             self.bridge.get_logger().warning(f"Dropped invalid docking command for {name}: {exc}")
         except (OSError, ValueError) as exc:
@@ -170,7 +169,7 @@ class ControlService:
                 "sequence": sequence,
             }
             try:
-                self.bridge.transport.send(encode_motor_command(command), self.bridge.command_endpoint)
+                self.bridge.connection.send_command(command)
             except (OSError, ValueError) as exc:
                 self.bridge.get_logger().warning(f"Motor command UDP send failed: {exc}")
             return

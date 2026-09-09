@@ -1,4 +1,4 @@
-import json
+from .protocol import encode_datagram
 import math
 from dataclasses import dataclass
 from typing import Any, Dict, List, Sequence
@@ -69,4 +69,4 @@ def _optional_values(values: Sequence[float], count: int, field_name: str) -> Li
 
 
 def encode_motor_command(command: Dict[str, Any]) -> bytes:
-    return json.dumps(command, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    return encode_datagram(command)

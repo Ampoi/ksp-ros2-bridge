@@ -5,7 +5,8 @@
     <Nullable>disable</Nullable>
     <AssemblyName>PyLoN</AssemblyName>
     <RootNamespace>PyLoN</RootNamespace>
-    <OutputPath>..\..\GameData\PyLoN\Plugins\</OutputPath>
+    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <ModOutputDir>$(MSBuildProjectDirectory)/../../GameData/PyLoN</ModOutputDir>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
@@ -65,4 +66,20 @@
       <Private>false</Private>
     </Reference>
   </ItemGroup>
+
+  <!-- Assets are tracked inputs; GameData is a disposable installation tree. -->
+  <ItemGroup>
+    <ModAsset Include="../../Assets/PyLoN/**/*" />
+  </ItemGroup>
+  <Target Name="AssembleGameData" AfterTargets="Build">
+    <Error Condition="!Exists('../../Assets/PyLoN/Config/Runtime.cfg')"
+           Text="Missing mod assets: Assets/PyLoN/Config/Runtime.cfg" />
+    <RemoveDir Directories="$(ModOutputDir)" />
+    <MakeDir Directories="$(ModOutputDir)/Plugins" />
+    <Copy SourceFiles="@(ModAsset)"
+          DestinationFiles="@(ModAsset->'$(ModOutputDir)/%(RecursiveDir)%(Filename)%(Extension)')" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ModOutputDir)/Plugins" />
+    <Copy SourceFiles="$(TargetDir)$(TargetName).pdb" DestinationFolder="$(ModOutputDir)/Plugins"
+          Condition="Exists('$(TargetDir)$(TargetName).pdb')" />
+  </Target>
 </Project>

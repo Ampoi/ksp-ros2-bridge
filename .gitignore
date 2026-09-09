@@ -15,8 +15,9 @@ __pycache__/
 node_modules/
 docs/.vitepress/cache/
 docs/.vitepress/dist/
-GameData/PyLoN/Plugins/*.dll
-GameData/PyLoN/Plugins/*.pdb
+# Generated mod installation tree and release archives.
+/GameData/
+/dist/
 .vercel
 .env*
 

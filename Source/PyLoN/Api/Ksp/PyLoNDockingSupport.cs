@@ -111,21 +111,9 @@ namespace PyLoN
             }
         }
 
-        internal static bool TryDispatch(string json, int port)
+        // Called only after CommandDispatcher has accepted the session envelope.
+        internal static bool TryDispatch(string json, PyLoNCommandEnvelope envelope, int port)
         {
-            if (string.IsNullOrEmpty(json))
-            {
-                return false;
-            }
-            PyLoNCommandEnvelope envelope;
-            try
-            {
-                envelope = JsonUtility.FromJson<PyLoNCommandEnvelope>(json);
-            }
-            catch
-            {
-                return false;
-            }
             if (envelope == null || envelope.type != "pylon_docking_port_command")
             {
                 return false;
@@ -497,7 +485,7 @@ namespace PyLoN
             if (stateClient == null || stateEndpoint == null) return;
             try
             {
-                var bytes = Encoding.UTF8.GetBytes(RuntimeSession.Wrap(builder.ToString()));
+                var bytes = TelemetryPacketCodec.Encode(builder.ToString());
                 stateClient.Send(bytes, bytes.Length, stateEndpoint);
             }
             catch (Exception exception)

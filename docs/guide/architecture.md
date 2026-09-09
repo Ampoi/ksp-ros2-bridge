@@ -14,6 +14,8 @@
 | `Ros2/pylon_bridge/pylon_bridge/services` | 単一ノードへ合成する通信・セッション・センサー・モデル・制御サービス |
 | `Ros2/pylon_vehicle_control` | 再利用可能な6DoF制御domainとlease workflow |
 | `Demo` | 公開APIだけを使う実行例。共通制御は置かない |
+| `Assets/PyLoN` | Gitで管理する配布用CFG・モデル・画像の原本 |
+| `GameData/` / `dist/`（Git対象外） | 配置用MODと、Releasesへ手動登録する配布ZIP |
 | `build.sh` / `build.ps1` / `sync.sh` | 公開ソースだけで完結する本番ビルド・同期 |
 | `Development`（ローカル専用・Git対象外） | デバッグ補助、検証コード、記録、モデル編集元 |
 

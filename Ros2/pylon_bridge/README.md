@@ -39,6 +39,8 @@ RGB画像は上端始まりの`rgb8`で、対応する`CameraInfo`とtimestamp�
 
 3D点群は、現在のKSP modが使うコンパクトなFibonacci半球配置をrange配列から復元します。明示的な方向配列はフラット形式（`[x,y,z,...]`）だけを受信します。
 
+内部の通信責務と将来のROS 2／Space ROS分離境界は[設計文書](ARCHITECTURE.md)を参照してください。
+
 ## Build
 
 ROS2 Jazzy（Ubuntu 24.04、Python 3.12）を対象とします。

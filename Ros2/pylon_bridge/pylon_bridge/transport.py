@@ -1,18 +1,28 @@
-"""Bounded UDP transport. Outgoing commands are bound to the observed flight session."""
-import json
+"""Nonblocking UDP I/O. Protocol and flight-session policy live above this layer."""
+
 import socket
-import time
+
 
 class UdpTransport:
-    def __init__(self,args,session):
-        self.args=args;self.session=session
-        self.socket=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+    def __init__(self, endpoint, max_datagram_bytes=65535):
+        self.max_datagram_bytes = max_datagram_bytes
+        self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
-            self.socket.bind((args.host,args.port));self.socket.setblocking(False)
+            self._socket.bind(endpoint)
+            self._socket.setblocking(False)
         except BaseException:
-            self.socket.close();raise
-    def send(self,payload,endpoint):
-        packet=json.loads(payload.decode('utf-8'))
-        packet.update(self.session.command_fields(time.monotonic(),self.args.topic_timeout_sec))
-        return self.socket.sendto(json.dumps(packet,separators=(',',':'),allow_nan=False).encode(),endpoint)
-    def close(self):self.socket.close()
+            self._socket.close()
+            raise
+
+    @property
+    def local_endpoint(self):
+        return self._socket.getsockname()
+
+    def receive(self):
+        return self._socket.recvfrom(self.max_datagram_bytes)
+
+    def send(self, payload, endpoint):
+        return self._socket.sendto(payload, endpoint)
+
+    def close(self):
+        self._socket.close()

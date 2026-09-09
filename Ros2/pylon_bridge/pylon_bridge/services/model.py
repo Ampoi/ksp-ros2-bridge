@@ -1,4 +1,3 @@
-import ipaddress
 import time
 from typing import Any, Dict, Optional
 from geometry_msgs.msg import TransformStamped
@@ -15,15 +14,8 @@ class ModelService:
         if not self.model_source_allowed(address):
             return
         now = time.monotonic()
-        self.bridge.cleared_model_sessions = {
-            session_id: expires_at
-            for session_id, expires_at in self.bridge.cleared_model_sessions.items()
-            if expires_at > now
-        }
-        if packet.get("sessionId") in self.bridge.cleared_model_sessions:
-            return
         try:
-            model = self.bridge.model_assembler.consume(packet)
+            model = self.bridge.runtime.model_transfer.consume(packet, now)
         except ValueError as exc:
             self.bridge.get_logger().warning(f"Dropped invalid active-vessel URDF packet: {exc}")
             return
@@ -56,42 +48,15 @@ class ModelService:
     def consume_model_clear(self, packet: Dict[str, Any], address: Any) -> None:
         if not self.model_source_allowed(address):
             return
-        session_id = packet.get("sessionId")
-        if (
-            packet.get("version") != 1
-            or not isinstance(session_id, str)
-            or len(session_id) != 32
-            or any(character not in "0123456789abcdef" for character in session_id)
-        ):
+        session_id = self.bridge.runtime.model_transfer.clear(packet, time.monotonic())
+        if session_id is None:
             return
-        now = time.monotonic()
-        self.bridge.cleared_model_sessions = {
-            previous_session: expires_at
-            for previous_session, expires_at in self.bridge.cleared_model_sessions.items()
-            if expires_at > now
-        }
-        if len(self.bridge.cleared_model_sessions) >= 1024:
-            oldest_session = min(
-                self.bridge.cleared_model_sessions,
-                key=self.bridge.cleared_model_sessions.get,
-            )
-            del self.bridge.cleared_model_sessions[oldest_session]
-        self.bridge.cleared_model_sessions[session_id] = now + 120.0
         if self.bridge.active_model is not None and session_id == self.bridge.active_model.session_id:
             self.clear_active_model("KSP cleared the active vessel")
 
     def model_source_allowed(self, address: Any) -> bool:
-        if self.bridge.args.allow_remote_models:
-            return True
-        try:
-            source = ipaddress.ip_address(address[0])
-            allowed = source.is_loopback or (
-                source.version == 6
-                and source.ipv4_mapped is not None
-                and source.ipv4_mapped.is_loopback
-            )
-        except (IndexError, TypeError, ValueError):
-            allowed = False
+        allowed = self.bridge.runtime.model_transfer.source_allowed(
+            address, self.bridge.args.allow_remote_models)
         if not allowed and not self.bridge.remote_model_warning_shown:
             self.bridge.remote_model_warning_shown = True
             self.bridge.get_logger().warning(
@@ -165,7 +130,7 @@ class ModelService:
             self.clear_active_model("active-vessel runtime proxy expired")
             return
 
-        sample = self.bridge.latest_sample_time
+        sample = self.bridge.runtime.latest_sample_time
         stamp = self.bridge.flight.stamp_for_universal_time(sample) if sample is not None else self.bridge.get_clock().now().to_msg()
         root_transform = TransformStamped()
         root_transform.header.stamp = stamp

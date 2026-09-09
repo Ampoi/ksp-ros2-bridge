@@ -2,7 +2,6 @@ import math
 import struct
 import time
 from typing import Any, Dict, Optional
-from pylon_interfaces.msg import VesselLifecycle
 from sensor_msgs.msg import Imu, LaserScan, PointCloud2, PointField
 from ..packet_conversion import expired_topic_names, laser_scan_from_packet, lidar_topic_from_packet, packet_sensor_id, points_from_packet, sanitize_ros_name
 from ..imu_packets import imu_from_packet
@@ -23,7 +22,7 @@ class SensorsService:
         if self.last_imu_time is not None and state.universal_time <= self.last_imu_time:
             return
         self.last_imu_time = state.universal_time
-        self.bridge.latest_sample_time = max(self.bridge.latest_sample_time or float('-inf'), state.universal_time)
+        self.bridge.runtime.note_sample_time(state.universal_time)
         message = Imu()
         message.header.stamp = self.bridge.flight.stamp_for_packet(packet)
         message.header.frame_id = "base_link"
@@ -97,20 +96,7 @@ class SensorsService:
             self.remove_publisher(topic, reason)
 
     def remove_stale_publishers(self) -> None:
-        self.bridge.star_tracker.expire_star_trackers()
-        self.bridge.camera_assembler.expire()
         now = time.monotonic()
-        seen_at = self.bridge.session.last_seen
-        if (
-            seen_at > 0.0
-            and now - seen_at > self.bridge.args.topic_timeout_sec
-            and self.bridge.lifecycle_state != VesselLifecycle.STATE_STALE
-        ):
-            self.bridge.flight.reset_session()
-            self.bridge.session.available = False
-            self.bridge.lifecycle_state = VesselLifecycle.STATE_STALE
-            self.bridge.lifecycle_reason = "session_timeout"
-            self.bridge.flight.publish_vessel_lifecycle(reason=self.bridge.lifecycle_reason)
         for topic in expired_topic_names(
             self.bridge.sensor_last_seen, now, self.bridge.args.topic_timeout_sec
         ):

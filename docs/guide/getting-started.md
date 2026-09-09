@@ -123,6 +123,10 @@ rosdep install --from-paths \
 
 ## 4. MODとROS2パッケージをビルド・インストールする
 
+配布版MODを使う場合は、[Releases](https://github.com/Ampoi/KSP_ROS2/releases)の`PyLoN-vX.Y.Z.zip`を展開し、`GameData/PyLoN`をKSPの`GameData`へコピーします。「Source code」アーカイブにはビルド済みMODは含まれません。更新前にインストール先の`Config/Runtime.cfg`を控えてください。ROS2側だけをビルド・同期するには`./sync.sh --skip-ksp-build --skip-ksp-sync`を使います。
+
+以下はMODもソースからビルドする場合の手順です。
+
 **KSPを終了した状態**で、リポジトリのルートから実行します。
 
 ```bash
@@ -135,7 +139,7 @@ rosdep install --from-paths \
 2. `GameData/PyLoN`を`$KSPDIR/GameData/PyLoN`へ同期する。
 3. 本体3パッケージを`$ROS2_WS/src`へ同期し、colconでビルドする。
 
-ソース取得直後の`GameData/PyLoN`にはビルド済みDLLが含まれません。**フォルダをコピーするだけではMODは動きません。** 最後に`PyLoN sync complete`と3パッケージの名前が表示されたら、配置を確認します。
+`GameData/`はGit管理外で、ソース取得直後には存在しません。ビルド時に`Assets/PyLoN`の原本と生成DLLから作られます。最後に`PyLoN sync complete`と3パッケージの名前が表示されたら、配置を確認します。
 
 ```bash
 test -f "$KSPDIR/GameData/PyLoN/Plugins/PyLoN.dll" && echo "MOD installed"

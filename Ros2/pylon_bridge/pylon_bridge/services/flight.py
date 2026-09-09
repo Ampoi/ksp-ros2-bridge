@@ -2,8 +2,6 @@ import time
 from typing import Any, Dict, Optional
 from pylon_interfaces.msg import VesselLifecycle
 from rclpy.time import Time as RosTime
-from ..camera_packets import CameraFrameAssembler
-from ..vessel_model import UrdfChunkAssembler
 
 class FlightService:
     """Flight adapter composed by the PyLoN ROS node."""
@@ -12,35 +10,38 @@ class FlightService:
         self.bridge = bridge
 
     def observe_session(self, packet):
-        previous = self.bridge.session.revision
         try:
-            if not self.bridge.session.observe(packet, time.monotonic()):
-                return
+            event = self.bridge.runtime.observe_session(packet, time.monotonic())
         except ValueError as exc:
             self.bridge.get_logger().warning(f"Invalid flight session: {exc}")
             return
+        if event is not None:
+            self.apply_session(event)
+
+    def apply_session(self, event):
         self.bridge.active_vessel_id = self.bridge.session.key.vessel
         self.bridge.active_vessel_name = self.bridge.session.vessel_name
         self.bridge.vessel_generation = self.bridge.session.generation
         self.bridge.lifecycle_state = (VesselLifecycle.STATE_ACTIVE if self.bridge.session.available
                                 else VesselLifecycle.STATE_UNAVAILABLE)
         self.bridge.lifecycle_reason = 'session_active' if self.bridge.session.available else 'session_unavailable'
-        if previous != self.bridge.session.revision:
-            self.reset_session()
-        self.bridge.latest_sample_time = max(self.bridge.latest_sample_time or float('-inf'), packet['universalTime'])
+        if event.session_changed:
+            self.reset_ros_state()
         self.publish_vessel_lifecycle()
 
-    def reset_session(self):
-        self.bridge.simulation_clock.reset()
+    def expire_session(self):
+        if self.bridge.runtime.expire_session(time.monotonic(), self.bridge.args.topic_timeout_sec):
+            self.reset_ros_state()
+            self.bridge.lifecycle_state = VesselLifecycle.STATE_STALE
+            self.bridge.lifecycle_reason = "session_timeout"
+            self.publish_vessel_lifecycle(reason=self.bridge.lifecycle_reason)
+
+    def reset_ros_state(self):
         self.bridge.latest_ground_truth = None
         self.bridge.latest_ground_truth_seen_at = 0.0
-        self.bridge.latest_sample_time = None
         self.bridge.sensors.last_imu_time = None
         self.bridge.camera.last_frame_times.clear()
         self.bridge.model.clear_active_model("flight session changed")
-        self.bridge.model_assembler = UrdfChunkAssembler()
-        self.bridge.camera_assembler = CameraFrameAssembler()
-        self.bridge.cleared_model_sessions.clear()
         self.bridge.static_sensor_transforms.clear()
         self.bridge.static_transform_broadcaster.clear()
         self.bridge.motor_states.clear()
@@ -63,7 +64,7 @@ class FlightService:
 
     def stamp_for_universal_time(self, universal_time: float) -> Any:
         receipt = self.bridge.get_clock().now().nanoseconds
-        nanoseconds = self.bridge.simulation_clock.map_nanoseconds(universal_time, receipt)
+        nanoseconds = self.bridge.runtime.simulation_clock.map_nanoseconds(universal_time, receipt)
         return RosTime(nanoseconds=nanoseconds, clock_type=self.bridge.get_clock().clock_type).to_msg()
 
     def publish_vessel_lifecycle(

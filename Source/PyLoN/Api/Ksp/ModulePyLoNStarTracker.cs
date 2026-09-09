@@ -192,7 +192,7 @@ namespace PyLoN
             try
             {
                 if (client == null) { client = new UdpClient(); client.Connect(udpHost, udpPort); }
-                var bytes = Encoding.UTF8.GetBytes(RuntimeSession.Wrap(packet.ToString())); client.Send(bytes, bytes.Length);
+                var bytes = TelemetryPacketCodec.Encode(packet.ToString()); client.Send(bytes, bytes.Length);
             }
             catch (Exception ex)
             {

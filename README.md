@@ -45,15 +45,21 @@ kRPCは使用しません。KSPプラグインがセンサー取得と機体制�
 
 KSP本体のManaged DLLを参照してビルドします。KSPのインストール先を`KSPDIR`として渡してください。
 
+```bash
+./build.sh --ksp-dir "$KSPDIR"
+```
+
 ```powershell
 .\build.ps1 -KspDir "C:\SteamLibrary\steamapps\common\Kerbal Space Program"
 ```
 
-ビルドに成功するとDLLが`GameData/PyLoN/Plugins/PyLoN.dll`へ出力されます。
+ビルドに成功すると`GameData/PyLoN`にDLLと配布用資産が揃います。`GameData/`全体はGit管理外の生成物です。CFG・モデル・画像の原本は`Assets/PyLoN`で管理し、ビルド時にコピーします。設定の開発変更は原本へ加えてください。生成された`GameData/PyLoN`はビルドごとに作り直します。
 
 ## インストール
 
-`GameData/PyLoN`フォルダをKSPの`GameData`へコピーします。
+[Releases](https://github.com/Ampoi/KSP_ROS2/releases)から`PyLoN-vX.Y.Z.zip`をダウンロードし、中の`GameData/PyLoN`フォルダをKSPの`GameData`へコピーします。GitHubの自動生成する「Source code」アーカイブにはビルド済みMODは含まれません。更新時はインストール先の`Config/Runtime.cfg`を控えてから置き換えてください。ROS2パッケージはソースからビルドします。
+
+配布ZIPはローカルでビルドし、Releasesへ手動で登録します。[リリース手順](RELEASING.md)を参照してください。
 
 ## 設定
 

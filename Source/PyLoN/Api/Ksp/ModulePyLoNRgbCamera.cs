@@ -240,7 +240,7 @@ namespace PyLoN
                 AppendQuaternion(builder, "frameRotation", frameRotation, false);
                 AppendString(builder, "data", Convert.ToBase64String(rgb, offset, count), false);
                 builder.Append('}');
-                var datagram = Encoding.UTF8.GetBytes(RuntimeSession.Wrap(builder.ToString()));
+                var datagram = TelemetryPacketCodec.Encode(builder.ToString());
                 udpClient.Send(datagram, datagram.Length, udpEndPoint);
             }
         }
@@ -262,7 +262,7 @@ namespace PyLoN
                 AppendString(builder, "sensorId", ResolveSensorId(), false);
                 AppendNumber(builder, "partFlightId", part != null ? (long)part.flightID : 0L, false);
                 builder.Append('}');
-                var datagram = Encoding.UTF8.GetBytes(RuntimeSession.Wrap(builder.ToString()));
+                var datagram = TelemetryPacketCodec.Encode(builder.ToString());
                 udpClient.Send(datagram, datagram.Length, udpEndPoint);
             }
             catch (Exception ex)

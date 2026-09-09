@@ -1,7 +1,5 @@
 using System;
 using System.Globalization;
-using System.Net;
-using System.Net.Sockets;
 using System.Text;
 using UnityEngine;
 
@@ -11,9 +9,7 @@ namespace PyLoN
     {
         private const int JsonVersion = 1;
 
-        private UdpClient udpClient;
-        private IPEndPoint udpEndPoint;
-        private string endpointKey;
+        private readonly UdpPacketSender udpSender = new UdpPacketSender();
         private double lastUdpWarningTime = -1000.0;
         private readonly StringBuilder packetBuilder = new StringBuilder(8192);
 
@@ -21,16 +17,16 @@ namespace PyLoN
         {
             try
             {
-                EnsureUdpClient();
+                udpSender.Configure(udpHost, udpPort);
 
-                var bytes = Encoding.UTF8.GetBytes(RuntimeSession.Wrap(payload));
+                var bytes = TelemetryPacketCodec.Encode(payload);
                 if (bytes.Length > maxDatagramBytes)
                 {
                     WarnUdpThrottled("LiDAR UDP packet is " + bytes.Length + " bytes; reduce laser count or disable optional arrays.");
                     return;
                 }
 
-                udpClient.Send(bytes, bytes.Length, udpEndPoint);
+                udpSender.Send(bytes);
             }
             catch (Exception ex)
             {
@@ -38,48 +34,9 @@ namespace PyLoN
             }
         }
 
-        private void EnsureUdpClient()
-        {
-            var host = string.IsNullOrEmpty(udpHost) ? "127.0.0.1" : udpHost;
-            var key = host + ":" + udpPort.ToString(CultureInfo.InvariantCulture);
-            if (udpClient != null && udpEndPoint != null && endpointKey == key)
-            {
-                return;
-            }
-
-            CloseUdpClient();
-            udpClient = new UdpClient();
-            udpEndPoint = new IPEndPoint(ResolveAddress(host), udpPort);
-            endpointKey = key;
-        }
-
-        private static IPAddress ResolveAddress(string host)
-        {
-            IPAddress address;
-            if (IPAddress.TryParse(host, out address))
-            {
-                return address;
-            }
-
-            var addresses = Dns.GetHostAddresses(host);
-            if (addresses.Length == 0)
-            {
-                throw new InvalidOperationException("Could not resolve UDP host '" + host + "'.");
-            }
-
-            return addresses[0];
-        }
-
         private void CloseUdpClient()
         {
-            if (udpClient != null)
-            {
-                udpClient.Close();
-                udpClient = null;
-            }
-
-            udpEndPoint = null;
-            endpointKey = null;
+            udpSender.Dispose();
         }
 
         private void WarnUdpThrottled(string message)

@@ -47,22 +47,5 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
-$pluginDir = Join-Path $PSScriptRoot "GameData\PyLoN\Plugins"
-New-Item -ItemType Directory -Force -Path $pluginDir | Out-Null
-
-$pluginDll = Join-Path $pluginDir "PyLoN.dll"
-$pluginPdb = Join-Path $pluginDir "PyLoN.pdb"
-$objDir = Join-Path $PSScriptRoot "Source\PyLoN\obj\$Configuration"
-$objDll = Join-Path $objDir "PyLoN.dll"
-$objPdb = Join-Path $objDir "PyLoN.pdb"
-
-if (-not (Test-Path $pluginDll) -and (Test-Path $objDll)) {
-    Copy-Item -Force $objDll $pluginDll
-}
-
-if (-not (Test-Path $pluginPdb) -and (Test-Path $objPdb)) {
-    Copy-Item -Force $objPdb $pluginPdb
-}
-
 Write-Host "PyLoN mod folder is ready at: $((Join-Path $PSScriptRoot 'GameData\PyLoN'))"
 exit 0

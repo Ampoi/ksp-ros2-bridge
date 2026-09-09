@@ -23,13 +23,13 @@ from std_msgs.msg import String
 from tf2_ros import TransformBroadcaster
 
 
-from .camera_packets import CameraFrameAssembler
-from .packet_conversion import decode_datagram, sanitize_ros_name
+from .packet_conversion import sanitize_ros_name
 from .motor_packets import MotorStateData
-from .vessel_model import UrdfChunkAssembler, VesselProxyModel
-from .domain.time_alignment import SimulationClock
+from .vessel_model import VesselProxyModel
 from .static_transforms import StaticTransformSnapshot
-from .domain.session import SessionTracker
+from .application.runtime import BridgeRuntime
+from .application.connection import BridgeConnection
+from .protocol import SESSION_PACKET_TYPE
 from .transport import UdpTransport
 
 
@@ -139,6 +139,8 @@ class PyLoNBridge(Node):
     def __init__(self, args: argparse.Namespace) -> None:
         super().__init__(sanitize_ros_name(args.node_name, "pylon_bridge"))
         self.args = args
+        self.runtime = BridgeRuntime()
+        self.session = self.runtime.session
         self.sensors = SensorsService(self)
         self.camera = CameraService(self)
         self.model = ModelService(self)
@@ -147,13 +149,11 @@ class PyLoNBridge(Node):
         self.vehicle_state = VehicleStateService(self)
         self.star_tracker = StarTrackerService(self)
         self.ground_truth_enabled = not args.disable_ground_truth
-        self.latest_sample_time = None
         self.topic_prefix = "/" + args.topic_prefix.strip("/")
         self.bridge_prefix = "/" + args.bridge_prefix.strip("/")
         self.sensor_publishers: Dict[str, Any] = {}
         self.sensor_publisher_types: Dict[str, str] = {}
         self.sensor_last_seen: Dict[str, float] = {}
-        self.camera_assembler = CameraFrameAssembler()
         self.actuator_publishers: Dict[str, Any] = {}
         self.actuator_subscriptions: Dict[str, Any] = {}
         self.actuator_kinds: Dict[str, str] = {}
@@ -179,17 +179,11 @@ class PyLoNBridge(Node):
         self.transform_broadcaster = TransformBroadcaster(self)
         self.static_transform_broadcaster = StaticTransformSnapshot(self)
         self.static_sensor_transforms: Dict[str, Tuple[Any, ...]] = {}
-        self.model_assembler = UrdfChunkAssembler()
         self.active_model: Optional[VesselProxyModel] = None
         self.active_model_seen_at = 0.0
         self.remote_model_warning_shown = False
-        self.cleared_model_sessions: Dict[str, float] = {}
         self.motor_states: Dict[str, MotorStateData] = {}
         self.pending_command_order = 0
-        # IMU integration requires physical sample intervals, even when the game
-        # runs slower than wall time or camera packets arrive late. Rebase only
-        # at an explicit vessel/time reset, never on ordinary transport latency.
-        self.simulation_clock = SimulationClock()
         self.latest_ground_truth = None
         self.latest_ground_truth_seen_at = 0.0
         self.active_vessel_id = ""
@@ -197,10 +191,32 @@ class PyLoNBridge(Node):
         self.vessel_generation = 0
         self.lifecycle_state = VesselLifecycle.STATE_UNAVAILABLE
         self.lifecycle_reason = "waiting_for_session"
-        self.command_endpoint = (args.command_host, args.command_port)
-        self.session = SessionTracker()
-        self.transport = UdpTransport(args, self.session)
-        self.sock = self.transport.socket
+        self.transport = UdpTransport((args.host, args.port), args.max_datagram_bytes)
+        self.connection = BridgeConnection(
+            self.transport, self.runtime, (args.command_host, args.command_port),
+            args.topic_timeout_sec, self.dispatch_packet, self.get_logger().warning)
+        self.packet_handlers = {
+            "pylon_vessel_urdf_chunk": self.model.consume_model_chunk,
+            "pylon_vessel_urdf_clear": self.model.consume_model_clear,
+            "pylon_lidar_inactive": lambda packet, address: self.sensors.remove_packet_publisher(packet, "KSP left Flight"),
+            "pylon_camera_inactive": lambda packet, address: self.camera.remove_camera_publishers(packet, "KSP left Flight"),
+        }
+        for packet_type, handler in {
+            "pylon_camera_frame_chunk": self.camera.consume_camera_chunk,
+            "pylon_docking_port_manifest": self.vehicle_state.apply_docking_port_manifest,
+            "pylon_lidar_scan": self.sensors.publish_packet,
+            "pylon_motor_state": self.vehicle_state.publish_motor_state,
+            "pylon_star_tracker": self.star_tracker.publish_star_tracker,
+            "pylon_imu": self.sensors.publish_imu,
+            "pylon_ground_truth": self.vehicle_state.publish_ground_truth,
+            "pylon_nearby_vessels": self.vehicle_state.publish_nearby_vessels,
+            "pylon_actuator_state": self.vehicle_state.publish_actuator_state,
+            "pylon_actuator_manifest": self.vehicle_state.apply_actuator_manifest,
+            "pylon_wrench_status": self.control.publish_wrench_status,
+            "pylon_control_authority_state": self.control.publish_control_authority_state,
+            "pylon_docking_port_state": self.vehicle_state.publish_docking_port_state,
+        }.items():
+            self.packet_handlers[packet_type] = lambda packet, address, handler=handler: handler(packet)
         self.joint_state_publisher = self.create_publisher(
             JointState, args.joint_states_topic, 10
         )
@@ -263,7 +279,7 @@ class PyLoNBridge(Node):
             Imu, f"{self.topic_prefix}/imu/data_raw", state_qos
         )
         self.timer = self.create_timer(0.001, self.poll_udp)
-        self.cleanup_timer = self.create_timer(0.25, self.sensors.remove_stale_publishers)
+        self.cleanup_timer = self.create_timer(0.25, self.remove_stale_state)
         tf_rate = max(0.5, min(float(args.model_tf_rate), 60.0))
         self.model_tf_timer = self.create_timer(1.0 / tf_rate, self.model.publish_model_transforms)
         self.status_publisher.publish(String(data="listening"))
@@ -280,71 +296,26 @@ class PyLoNBridge(Node):
         )
 
     def destroy_node(self) -> bool:
-        self.sock.close()
+        self.connection.close()
         return super().destroy_node()
 
     def poll_udp(self) -> None:
-        for _ in range(256):
-            try:
-                data, address = self.sock.recvfrom(self.args.max_datagram_bytes)
-            except BlockingIOError:
-                return
-            except (OSError, ValueError) as exc:
-                self.get_logger().warning(f"UDP receive failed: {exc}")
-                return
+        self.connection.poll()
 
-            try:
-                packet = decode_datagram(data)
-            except Exception as exc:
-                self.get_logger().warning(f"Dropped invalid PyLoN packet: {exc}")
-                continue
+    def dispatch_packet(self, event, address) -> None:
+        packet = event.packet
+        if packet["type"] == SESSION_PACKET_TYPE:
+            self.flight.apply_session(event)
+            return
+        handler = self.packet_handlers.get(packet["type"])
+        if handler is not None:
+            handler(packet, address)
 
-            packet_type = packet.get("type")
-            if packet_type == "pylon_session":
-                self.flight.observe_session(packet)
-                continue
-            if not self.session.accepts(packet):
-                continue
-            if packet_type == "pylon_vessel_urdf_chunk":
-                self.model.consume_model_chunk(packet, address)
-                continue
-            if packet_type == "pylon_vessel_urdf_clear":
-                self.model.consume_model_clear(packet, address)
-                continue
-            if packet_type == "pylon_lidar_inactive":
-                self.sensors.remove_packet_publisher(packet, "KSP left Flight")
-                continue
-            if packet_type == "pylon_camera_inactive":
-                self.camera.remove_camera_publishers(packet, "KSP left Flight")
-                continue
-            if packet_type == "pylon_camera_frame_chunk":
-                self.camera.consume_camera_chunk(packet)
-                continue
-            if packet_type == "pylon_docking_port_manifest":
-                self.vehicle_state.apply_docking_port_manifest(packet)
-                continue
-            if packet_type == "pylon_lidar_scan":
-                self.sensors.publish_packet(packet)
-            elif packet_type == "pylon_motor_state":
-                self.vehicle_state.publish_motor_state(packet)
-            elif packet_type == "pylon_star_tracker":
-                self.star_tracker.publish_star_tracker(packet)
-            elif packet_type == "pylon_imu":
-                self.sensors.publish_imu(packet)
-            elif packet_type == "pylon_ground_truth":
-                self.vehicle_state.publish_ground_truth(packet)
-            elif packet_type == "pylon_nearby_vessels":
-                self.vehicle_state.publish_nearby_vessels(packet)
-            elif packet_type == "pylon_actuator_state":
-                self.vehicle_state.publish_actuator_state(packet)
-            elif packet_type == "pylon_actuator_manifest":
-                self.vehicle_state.apply_actuator_manifest(packet)
-            elif packet_type == "pylon_wrench_status":
-                self.control.publish_wrench_status(packet)
-            elif packet_type == "pylon_control_authority_state":
-                self.control.publish_control_authority_state(packet)
-            elif packet_type == "pylon_docking_port_state":
-                self.vehicle_state.publish_docking_port_state(packet)
+    def remove_stale_state(self) -> None:
+        self.star_tracker.expire_star_trackers()
+        self.runtime.camera_assembler.expire()
+        self.flight.expire_session()
+        self.sensors.remove_stale_publishers()
 
 
 def main(argv: Optional[List[str]] = None) -> int:

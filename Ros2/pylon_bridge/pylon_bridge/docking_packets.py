@@ -1,4 +1,4 @@
-import json
+from .protocol import encode_datagram
 from dataclasses import dataclass
 from typing import Any, Dict, List
 
@@ -77,7 +77,7 @@ def docking_port_state_from_packet(packet: Dict[str, Any]) -> DockingPortStateDa
     )
 
 
-def encode_docking_port_command(name: Any, action: Any, sequence: Any, vessel_id: str, controller_id: str, lease_id: str) -> bytes:
+def docking_port_command(name: Any, action: Any, sequence: Any, vessel_id: str, controller_id: str, lease_id: str) -> Dict[str, Any]:
     for label, value in (("vesselId", vessel_id), ("controllerId", controller_id), ("leaseId", lease_id)):
         _bounded_string(value, label, 128)
     normalized_name = docking_port_name(name)
@@ -85,12 +85,14 @@ def encode_docking_port_command(name: Any, action: Any, sequence: Any, vessel_id
     parsed_sequence = _bounded_int(sequence, "sequence", 1, 2**63 - 1)
     if parsed_action not in VALID_ACTIONS:
         raise ValueError("unsupported docking port action")
-    return json.dumps(
-        {"type": "pylon_docking_port_command", "version": 1, "name": normalized_name,
+    return {"type": "pylon_docking_port_command", "version": 1, "name": normalized_name,
          "action": parsed_action, "sequence": parsed_sequence,
-         "vesselId": vessel_id, "controllerId": controller_id, "leaseId": lease_id},
-        separators=(",", ":"), allow_nan=False,
-    ).encode("utf-8")
+         "vesselId": vessel_id, "controllerId": controller_id, "leaseId": lease_id}
+
+
+def encode_docking_port_command(name: Any, action: Any, sequence: Any, vessel_id: str, controller_id: str, lease_id: str) -> bytes:
+    """Compatibility encoder; bridge adapters send the command mapping directly."""
+    return encode_datagram(docking_port_command(name, action, sequence, vessel_id, controller_id, lease_id))
 
 
 def _strict_bool(value: Any, label: str) -> bool:

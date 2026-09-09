@@ -14,7 +14,7 @@ class CameraService:
 
     def consume_camera_chunk(self, packet: Dict[str, Any]) -> None:
         try:
-            frame = self.bridge.camera_assembler.consume(packet)
+            frame = self.bridge.runtime.camera_assembler.consume(packet)
         except ValueError as exc:
             self.bridge.get_logger().warning(f"Dropped invalid RGB camera packet: {exc}")
             return

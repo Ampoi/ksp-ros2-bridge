@@ -63,6 +63,9 @@ sync_dir() {
 }
 if (( !skip_ksp_build )); then "$repo_root/build.sh" --ksp-dir "$ksp_install"; fi
 if (( !skip_ksp_sync )); then
+    [[ -f "$repo_root/GameData/PyLoN/Plugins/PyLoN.dll" && -f "$repo_root/GameData/PyLoN/Config/Runtime.cfg" ]] || {
+        echo 'Missing generated mod. Run ./build.sh first or omit --skip-ksp-build.' >&2; exit 1;
+    }
     [[ -d "$ksp_install/GameData" ]] || { echo "Missing KSP GameData: $ksp_install" >&2; exit 1; }
     python3 "$repo_root/Migration/pylon_migrate.py" --retire-install --apply --ksp-dir "$ksp_install"
     target="$ksp_install/GameData/PyLoN"
