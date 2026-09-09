@@ -1,5 +1,7 @@
 import { defineConfig } from 'vitepress'
 
+const ogImage = 'https://raw.githubusercontent.com/Ampoi/pylon/master/Assets/OGP.png'
+
 export default defineConfig({
   lang: 'ja-JP',
   title: 'PyLoN Docs',
@@ -9,7 +11,16 @@ export default defineConfig({
   head: [
     ['meta', { name: 'theme-color', content: '#003dff' }],
     ['meta', { property: 'og:title', content: 'PyLoN Docs' }],
-    ['meta', { property: 'og:description', content: 'KSP 1.x と ROS2 をつなぐセンサー・ロボティクスAPIドキュメント' }]
+    ['meta', { property: 'og:description', content: 'KSP 1.x と ROS2 をつなぐセンサー・ロボティクスAPIドキュメント' }],
+    ['meta', { property: 'og:type', content: 'website' }],
+    ['meta', { property: 'og:image', content: ogImage }],
+    ['meta', { property: 'og:image:type', content: 'image/png' }],
+    ['meta', { property: 'og:image:width', content: '2400' }],
+    ['meta', { property: 'og:image:height', content: '1260' }],
+    ['meta', { property: 'og:image:alt', content: 'PyLoN' }],
+    ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
+    ['meta', { name: 'twitter:image', content: ogImage }],
+    ['meta', { name: 'twitter:image:alt', content: 'PyLoN' }]
   ],
   markdown: {
     lineNumbers: true

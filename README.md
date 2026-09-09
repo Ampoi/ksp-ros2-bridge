@@ -1,3 +1,5 @@
+![PyLoN](Assets/OGP.png)
+
 # PyLoN
 
 PyLoNは、Kerbal Space Program 1.xのセンサーと機体をROS2から扱うためのMODです。KSPとROS2 bridgeを接続し、点群・画像を使う認識ノードや、ローバー・宇宙機の制御アプリケーションを開発できます。
