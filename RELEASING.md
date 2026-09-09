@@ -9,7 +9,7 @@ MODはKSPをインストールしたローカル環境でビルドし、GitHub R
 - `GameData/PyLoN`: ビルド時に原本とDLLから毎回作り直す配置用フォルダ。Git管理外です。
 - `dist/PyLoN-vX.Y.Z.zip`と`.zip.sha256`: 配布ZIPとSHA-256チェックサム。Git管理外です。
 
-`PyLoN.csproj`はKSPインストール内の`Assembly-CSharp.dll`とUnityのDLLをコンパイル時に参照します。これらは`Private=false`であり、配布ZIPにも入りません。パッケージ処理は`Assets/PyLoN`のCFG・MU・PNGとビルドした`PyLoN.dll`だけを格納します。`Development/`、`Tools/`、PDB、ROS2ワークスペースは含めません。
+`PyLoN.csproj`はKSPインストール内の`Assembly-CSharp.dll`とUnityのDLLをコンパイル時に参照します。これらは`Private=false`であり、配布ZIPにも入りません。パッケージ処理は`Assets/PyLoN`のCFG・MU・PNGとビルドした`PyLoN.dll`、ルートの`LICENSE`を格納します。`Development/`、`Tools/`、PDB、ROS2ワークスペースは含めません。
 
 ## 配布ZIPを作る
 
@@ -27,7 +27,7 @@ sha256sum --check PyLoN-v1.0.0.zip.sha256
 unzip -l PyLoN-v1.0.0.zip
 ```
 
-ZIP直下は`GameData/PyLoN/`で、`Plugins/PyLoN.dll`、`Config/`、`Models/`、`Parts/`を含みます。利用者はこの`PyLoN`フォルダをKSPの`GameData`へ配置します。
+ZIP直下は`GameData/PyLoN/`で、`LICENSE`、`Plugins/PyLoN.dll`、`Config/`、`Models/`、`Parts/`を含みます。利用者はこの`PyLoN`フォルダをKSPの`GameData`へ配置します。
 
 ## GitHubへ登録する
 

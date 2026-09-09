@@ -39,7 +39,7 @@ source ~/ros2_ws/install/setup.bash
 | debris_orbit | pylon_demo_debris_orbit |
 | position_estimator | pylon_demo_position_estimator |
 | mun_rover_demo | pylon_demo_mun_rover |
-| ksp_nav2_bringup | 廃止。月面ローバーのNav2連携を使用 |
+| ksp_nav2_bringup | `pylon_demo_lidar_slam`（`./sync.sh --demo lidar_slam`で導入） |
 
 旧OBJ追加モデルは廃止し、配布済みの自作パーツはネイティブモデルを使います。独自OBJを指定した設定は、先にネイティブ`MODEL`設定へ変換してください。
 

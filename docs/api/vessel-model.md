@@ -1,6 +1,6 @@
 # Active vesselモデル
 
-Flight中の操作機体を、RViz向けのランタイム用プロキシURDFとTFとして公開します。KSPのmeshやtextureを再配布する仕組みではありません。
+Flight中の操作機体の形状とパーツ配置を、RViz向けの簡略化したURDFとTFとして公開します。
 
 ## 出力Topic
 
@@ -28,7 +28,7 @@ bridgeがURDF固定jointを`/tf_static`へpublishし、CoM変化があるroot ed
 
 ## 更新と期限切れ
 
-- Flight共通の`PyLoNVesselModelManager`がactive vesselモデルを送信します。LiDAR非搭載の機体にも対応し、送信担当は常に一つです。
+- Flight中は操作機体のモデルを送信します。センサーパーツを搭載していない機体も対象です。
 - 毎回の更新で全パーツの現在の形状と相対姿勢を取得します。構成変更だけでなく、展開・可動・サイズ変更もURDFとTFへ反映します（連続アニメーションではなく更新間隔ごとのスナップショットです）。
 - 既定の再送間隔は2秒です。
 - 受信モデルの有効期限は`max(3秒, refresh間隔 × 3)`です。既定では6秒です。
@@ -43,7 +43,7 @@ bridgeがURDF固定jointを`/tf_static`へpublishし、CoM変化があるroot ed
 
 モデルがない、期限切れ、またはpart mappingにない間も同じsensor frame名を使いますが、機体TFへは接続されません。`VesselLifecycle.model_ready`で区別できます。
 
-## 資産保護と受信検証
+## モデルの形状と受信条件
 
 - link名はKSPの永続的なvessel IDの短縮prefixを含む匿名名です。同じ機体の再ロードで安定し、機体間では衝突しません。
 - 標準・DLC・MODのパーツ名による対応表は使わず、機体の全パーツを走査します。
@@ -58,12 +58,6 @@ bridgeがURDF固定jointを`/tf_static`へpublishし、CoM変化があるroot ed
 - bridgeはURDFをファイルへ保存せず、メモリ上だけで保持します。
 
 既定では非loopback送信元のモデルパケットを拒否します。別ホストで使う場合だけ、KSP側`allowRemoteUrdf = true`とbridge側`--allow-remote-models`を両方指定してください。ROS2 Topicの到達範囲はDDS設定に従うため、必要に応じて`ROS_LOCALHOST_ONLY=1`やSROS2も使用します。
-
-## 実装確認先
-
-- `Source/PyLoN/Api/Ksp/PyLoNVesselModelManager.Geometry.cs`
-- `Ros2/pylon_bridge/pylon_bridge/vessel_model.py`
-- `Ros2/pylon_bridge/pylon_bridge/udp_bridge.py`
 
 ## 共通モデル設定
 

@@ -26,7 +26,9 @@ for relative in relative_paths:
         raise SystemExit(f'Unexpected asset type: {relative}')
     if (mod / relative).read_bytes() != (assets / relative).read_bytes():
         raise SystemExit(f'Generated asset differs from source: {relative}')
-relative_paths.append(Path('Plugins/PyLoN.dll'))
+relative_paths.extend([Path('Plugins/PyLoN.dll'), Path('LICENSE')])
+if (mod / 'LICENSE').read_bytes() != (root / 'LICENSE').read_bytes():
+    raise SystemExit('Generated license differs from source: LICENSE')
 for relative in relative_paths:
     if not (mod / relative).is_file() or (mod / relative).is_symlink():
         raise SystemExit(f'Missing or symlinked release file: {relative}')

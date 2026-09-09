@@ -1,5 +1,7 @@
 # pylon_demo_debris_orbit: LiDAR＋IMU周回デモ
 
+機体の準備から停止までの手順は、[デモガイド](../../docs/demos/debris-orbit.md)を参照してください。
+
 3D LiDARと6軸IMUだけでデブリへの相対位置・相対速度・姿勢変化を推定し、LiDARを向けながらRCSで周回します。**推定器・誘導器・制御器のすべてでGround Truthを購読しません。** 機体カメラで36度ごとに撮影し、次の周回も撮影を続けます。
 
 ```text

@@ -46,7 +46,7 @@ ros2 run pylon_vehicle_control setpoint_controller --ros-args \
 
 ## 「要求」と「実現」の違い
 
-このAPIはN/N·mを受け取ります。KSP内部の推進系はt・kN・kN·m系なので、KSP adapter境界で推力・トルクをSIへ変換してから配分し、観測値もSIへ戻して公開します。したがって`20 N`がKSP内部の`20 kN`として扱われることはありません。一方、KSPのnormalized flight-control inputを使うため、指定Wrenchを誤差なく生成する理想force sourceではありません。
+力はN、トルクはN·mで指定します。WrenchはKSPの操舵入力へ配分され、ノズル配置、推力上限、燃料、機体状態によって実現量が変わります。制御器では`WrenchFeedback`で要求値と実現量の差を確認してください。
 
 RCS配分器は、現在有効な各ノズルについて次をKSPと同じ軸規則で評価し、12個の正負操作channelを解きます。
 
@@ -69,7 +69,7 @@ RCS配分器は、現在有効な各ノズルについて次をKSPと同じ軸�
 
 `achieved`にはreaction wheel、タイヤ接触力、空力は含みません。`achieved_quality`に測定遅延と除外対象を明記します。並進による回転や燃料・KSP制御則による差を隠さず、controller側で飽和を判断できます。
 
-型付き`EngineCommand.target_thrust`、`RcsCommand.thrust_limit`、`WheelCommand.max_drive_torque`と対応するstateも同じくN/N·mです。KSP内部単位をROS messageへ直接露出しません。
+型付き`EngineCommand.target_thrust`、`RcsCommand.thrust_limit`、`WheelCommand.max_drive_torque`と対応するstateも同じくN/N·mです。
 
 ## SAS・emergency stop・安全上限
 

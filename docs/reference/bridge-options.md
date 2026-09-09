@@ -83,7 +83,7 @@ ros2 run pylon_bridge udp_bridge \
   --root-frame-topic /my_rover/root_frame
 ```
 
-実装上の全オプションは次でも確認できます。
+利用できる全オプションは次でも確認できます。
 
 ```bash
 ros2 run pylon_bridge udp_bridge --help

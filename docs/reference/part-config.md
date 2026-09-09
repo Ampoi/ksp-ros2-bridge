@@ -69,7 +69,7 @@
 | `cameraTiltDegrees` | `90` | 本体の上下首振り。0〜180°、craft／セーブに永続化 |
 | `cameraPivotTransformName` | `CameraPivot` | ローカルX軸で回転する本体。0°の基準回転はidentity |
 | `cameraOpticalTransformName` | `CameraOptical` | 回転本体内の撮影基準Transform。+Zが撮影方向、+Yが画像上方向 |
-| `cameraOriginLocalPosition` | `0, 0, -0.272` | 光学Transformがない旧モデルで使う撮影原点 |
+| `cameraOriginLocalPosition` | `0, 0, -0.272` | 光学Transformがないモデルで使う撮影原点 |
 | `forwardAxis` / `upAxis` | `-Z` / `+Y` | 光学Transformがない場合のcamera local軸 |
 
 ## モーター共通

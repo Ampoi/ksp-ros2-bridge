@@ -1,4 +1,4 @@
-# モノレポ設計
+# アーキテクチャ
 
 このリポジトリは、配置先ではなく責務の境界を基準に分けています。依存はadapterからapplication、applicationからdomainの内向きだけです。domainはKSP、Unity、ROS2、デモへ依存しません。
 
@@ -10,8 +10,9 @@
 | `Source/PyLoN/Application` | KSP内で制御ユースケースを組み立てる層 |
 | `Source/PyLoN/Api/Ksp` | KSP/Unity、UDP、PartModuleのadapter |
 | `Ros2/pylon_interfaces` | KSPとROS2アプリ間の明示的な契約 |
-| `Ros2/pylon_bridge/pylon_bridge/domain` | UDP packet検証とKSP時刻整合 |
-| `Ros2/pylon_bridge/pylon_bridge/services` | 単一ノードへ合成する通信・セッション・センサー・モデル・制御サービス |
+| `Ros2/pylon_bridge/pylon_bridge/domain` | セッション識別・世代順序・KSP時刻整合 |
+| `Ros2/pylon_bridge/pylon_bridge/application` | ROS非依存の受信・セッション寿命・転送状態・コマンド送信 |
+| `Ros2/pylon_bridge/pylon_bridge/services` | ROSメッセージ変換・Topic/TF公開・ROS公開状態の清掃 |
 | `Ros2/pylon_vehicle_control` | 再利用可能な6DoF制御domainとlease workflow |
 | `Demo` | 公開APIだけを使う実行例。共通制御は置かない |
 | `Assets/PyLoN` | Gitで管理する配布用CFG・モデル・画像の原本 |
@@ -19,7 +20,7 @@
 | `build.sh` / `build.ps1` / `sync.sh` | 公開ソースだけで完結する本番ビルド・同期 |
 | `Development`（ローカル専用・Git対象外） | デバッグ補助、検証コード、記録、モデル編集元 |
 
-`Development/`、旧`Tools/`、`dev_*.sh`はGit管理から除外します。本番C#プロジェクトはコンパイル対象を明示し、デバッグ用controllerを除外します。クリーンなcloneから`./sync.sh`でビルド・同期でき、ローカル開発用ファイルは不要です。
+本番C#プロジェクトはコンパイル対象を明示します。`./sync.sh`で公開ソースをビルド・同期します。作業手順とローカルファイルの扱いは[本体開発ガイド](index.md)を参照してください。
 
 ## 制御の境界
 

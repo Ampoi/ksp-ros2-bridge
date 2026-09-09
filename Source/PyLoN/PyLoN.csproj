@@ -78,6 +78,7 @@
     <MakeDir Directories="$(ModOutputDir)/Plugins" />
     <Copy SourceFiles="@(ModAsset)"
           DestinationFiles="@(ModAsset->'$(ModOutputDir)/%(RecursiveDir)%(Filename)%(Extension)')" />
+    <Copy SourceFiles="../../LICENSE" DestinationFolder="$(ModOutputDir)" />
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ModOutputDir)/Plugins" />
     <Copy SourceFiles="$(TargetDir)$(TargetName).pdb" DestinationFolder="$(ModOutputDir)/Plugins"
           Condition="Exists('$(TargetDir)$(TargetName).pdb')" />

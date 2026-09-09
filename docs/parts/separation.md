@@ -43,4 +43,4 @@ ros2 topic pub --once /ksp_vessel/actuators/separation/command \
   '{vessel_id: <vessel-id>, controller_id: manual, lease_id: <lease-id>, sequence: 3, id: fairing_67890_1, separate: true}'
 ```
 
-identityは先に[機体制御API](/api/vehicle-control)で取得したleaseへ置き換えてください。lease外から不可逆操作を行う互換経路はありません。
+identityは先に[機体制御API](/api/vehicle-control)で取得したleaseへ置き換えてください。

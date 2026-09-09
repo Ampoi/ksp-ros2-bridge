@@ -9,10 +9,6 @@ PyLoNを初めて使うための導入手順です。**Ubuntu 24.04の同じPC�
 
 最初に必要なソフトを導入し、PyLoNのソースからMODとROS2パッケージをビルドします。コマンドはbash用です。すでに完了している準備は飛ばしてください。
 
-::: tip 旧版を使っていた場合
-既存機体・セーブは、更新前に[PyLoNへの移行](../reference/migration.md)を確認してください。MODとROS2側は同じ版で更新します。
-:::
-
 ## 1. 必要なものを準備する
 
 | 必要なもの | この手順での用途 |
@@ -25,7 +21,7 @@ PyLoNを初めて使うための導入手順です。**Ubuntu 24.04の同じPC�
 
 この手順はKSP 1.x向けです。KSP 2には対応しません。最初の動作確認にはKSPのSandboxセーブを使うと、パーツの研究・購入を省けます。Steam版ならライブラリからKSPをインストールし、通常起動できることを確認して、いったん終了してください。
 
-PyLoN本体にはkRPC、Nav2、SciPy、RVizは不要です。RVizやデモは受信確認の後に追加できます。Node.jsとpnpmはドキュメントを編集するときだけ使用します。
+RVizでの可視化やデモの実行環境は、受信確認の後に追加できます。
 
 ### Ubuntuの基本ツールと.NET SDK
 
@@ -171,8 +167,6 @@ WindowsのKSP用にビルドする場合は、.NET SDKを導入したPowerShell�
 ```powershell
 .\build.ps1 -KspDir "C:\SteamLibrary\steamapps\common\Kerbal Space Program"
 ```
-
-旧版がある場合の退避とセーブ変換は[移行ガイド](../reference/migration.md)を参照してください。
 :::
 
 ## 5. ROS2 bridgeを起動する
@@ -251,38 +245,13 @@ rviz2
 `Global Options`の`Fixed Frame`を`base_link`にし、`Add` → `By topic`から`/ksp_vessel/lidar_3d/front_lidar/points`を選びます。PointCloud2表示のReliability Policyは`Best Effort`にします。センサーの取り付けTFを受信すると、機体基準の点群が表示されます。
 :::
 
-## 8. デモを追加する
+## 8. デモを動かす
 
-本体の受信を確認できたら、必要なデモの依存を追加します。例えば位置推定だけなら、リポジトリのルートで次を実行します。
+受信を確認できたら、[デモ一覧](../demos/index.md)から試したいデモを選んでください。各ページに追加パッケージの導入、機体準備、bridgeとデモの起動順、動作確認、停止方法をまとめています。
 
-```bash
-rosdep install --from-paths \
-  Ros2/pylon_interfaces Ros2/pylon_bridge Ros2/pylon_vehicle_control \
-  Ros2/pylon_perception Demo/pylon_demo_position_estimator \
-  --ignore-src --rosdistro jazzy -y
-./sync.sh --skip-ksp-build --skip-ksp-sync --demo position_estimator
-source ~/ros2_ws/install/setup.bash
-ros2 launch pylon_demo_position_estimator pylon_demo_position_estimator.launch.py \
-  lidar_sensor_id:=front_lidar
-```
-
-位置推定デモはbridgeを起動しないので、ターミナルAのbridgeを動かしたままにします。地面や周囲の形状が点群に十分入る場所で使用してください。
-
-全デモを入れる場合は、次のようにまとめて依存を導入・同期できます。ここでNav2、SciPy、RVizなども追加されます。
-
-```bash
-rosdep install --from-paths Ros2 Demo --ignore-src --rosdistro jazzy -y
-./sync.sh --skip-ksp-build --skip-ksp-sync --all-demos
-source ~/ros2_ws/install/setup.bash
-```
-
-| デモ | パッケージ | bridgeの起動 |
-| --- | --- | --- |
-| 3D LiDAR位置推定 | `pylon_demo_position_estimator` | 別途起動 |
-| デブリ周回・撮影 | `pylon_demo_debris_orbit` | 別途起動。機体・対象・カメラの準備はパッケージのREADMEを参照 |
-| [月面ローバー](nav2.md) | `pylon_demo_mun_rover` | `demo.launch.py`に含まれる。手動起動したbridgeを先に終了 |
-
-`./sync.sh --demo debris_orbit --demo position_estimator`のような複数指定もできます。デモは機体やセーブを自動作成しません。各デモのREADMEで必要な機体構成と起動引数を確認してください。
+- [軌道上のデブリ周回・撮影](../demos/debris-orbit.md)
+- [2D LiDARとSLAM](../demos/lidar-slam.md)：地図作成・保存・Nav2走行
+- [月面Nav2](../demos/mun-nav2.md)
 
 ## 別のPCでKSPを動かす場合
 
@@ -336,14 +305,6 @@ ros2 run pylon_bridge udp_bridge \
 
 更新時はKSPを終了し、`./sync.sh`を再実行してからKSPとbridgeを再起動します。デモも更新する場合は同じ`--demo`指定か`--all-demos`を付けます。詳しくは[トラブルシュート](../reference/troubleshooting.md)、設定項目は[bridge起動オプション](../reference/bridge-options.md)を参照してください。
 
-## ドキュメント自体を編集する場合
+## 次のステップ
 
-Node.jsとpnpmを用意したうえで、リポジトリのルートから実行します。MODやROS2の利用には不要です。
-
-```bash
-cd docs
-pnpm install --frozen-lockfile
-pnpm run docs:dev
-```
-
-`pnpm run docs:build`で静的サイトを生成し、`pnpm run docs:preview`で確認できます。VercelのRoot DirectoryとCLIの作業ディレクトリは`docs`です。
+[ROS2アプリケーションを作る](application-development.md)へ進み、受信したデータを自分のノードで利用してください。メッセージ型とTopicの一覧は[APIリファレンス](../api/topics.md)を参照できます。

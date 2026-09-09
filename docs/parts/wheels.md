@@ -57,9 +57,3 @@ ros2 topic echo /ksp_vessel/actuators/wheel/state
 ## 制御の優先順位と解除
 
 例のidentityは、先に[機体制御API](/api/vehicle-control)で取得したleaseへ置き換えてください。型付きcommandを受けたホイールはBody Wrench allocatorより優先されます。timeoutまたはactive vessel切替時にはdrive / steer入力を0へ戻し、元のmotor有効状態と最大トルクを復元します。
-
-## 実装確認先
-
-- `Source/PyLoN/Api/Ksp/PyLoNVehicleSupport.cs`
-- `Ros2/pylon_interfaces/msg/WheelCommand.msg`
-- `Ros2/pylon_interfaces/msg/WheelState.msg`

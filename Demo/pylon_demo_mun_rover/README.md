@@ -1,5 +1,7 @@
 # Mun rover / RViz Nav2 demo
 
+機体の準備から停止までの手順は、[デモガイド](../../docs/demos/mun-nav2.md)を参照してください。
+
 ROS 2 Jazzy。前輪操舵の4輪・6輪ローバーを、3D LiDAR・IMU・車輪情報から推定して走らせます。RVizの **Nav2 Goal** は到着位置と向きを指定します。内部Nav2 actionは `/pylon/mun_rover/navigate_to_pose`、安全監視を通る公開actionは `/navigate_to_pose` です。直接内部actionへ指令しないでください。
 
 ## 起動
